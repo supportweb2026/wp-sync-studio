@@ -8,7 +8,7 @@ export const credentialsSchema = z.object({
     .refine((u) => /^https?:\/\//.test(u), "Doit commencer par http(s)://")
     .transform((u) => u.replace(/\/+$/, "")),
   username: z.string().trim().min(1).max(120),
-  appPassword: z.string().trim().min(8).max(200),
+  appPassword: z.string().trim().max(200),
 });
 export type Credentials = z.infer<typeof credentialsSchema>;
 
