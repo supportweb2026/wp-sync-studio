@@ -101,15 +101,31 @@ export const saveConnection = createServerFn({ method: "POST" })
     const { probeCapabilities } = await import(
       "@/services/wordpress/capabilities.server"
     );
-    const { encryptSecret } = await import(
+    const { encryptSecret, decryptSecret } = await import(
       "@/services/wordpress/crypto.server"
     );
+    let appPassword = data.credentials.appPassword;
+    if (!appPassword) {
+      const existing = await loadAuthForRole(
+        context.supabase,
+        context.userId,
+        data.role,
+      );
+      if (!existing) {
+        throw new Error("Mot de passe d'application requis");
+      }
+      appPassword = existing.appPassword;
+    }
+    if (appPassword.length < 8) {
+      throw new Error("Mot de passe d'application trop court");
+    }
+    void decryptSecret;
     const caps = await probeCapabilities({
       siteUrl: data.credentials.siteUrl,
       username: data.credentials.username,
-      appPassword: data.credentials.appPassword,
+      appPassword,
     });
-    const encrypted = await encryptSecret(data.credentials.appPassword);
+    const encrypted = await encryptSecret(appPassword);
     const { error } = await context.supabase
       .from("wp_connections")
       .upsert(
