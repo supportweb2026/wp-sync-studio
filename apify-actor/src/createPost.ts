@@ -111,57 +111,58 @@ async function fillTitle(page: Page, title: string): Promise<void> {
 }
 
 async function fillContent(page: Page, content: string): Promise<void> {
-  // 1) TinyMCE actif → API officielle, plus fiable et invisible.
-  const hasTinymce = await page
-    .evaluate(() => {
-      // @ts-expect-error tinymce global injecté par WP
-      return typeof window.tinymce !== "undefined" && !!window.tinymce.get("content");
-    })
-    .catch(() => false);
-  if (hasTinymce) {
-    await page.evaluate((html) => {
-      // @ts-expect-error tinymce global
-      const ed = window.tinymce.get("content");
-      ed.setContent(html);
-      ed.save();
-    }, content);
-    console.log("[actor] Contenu injecté via TinyMCE API");
-    return;
-  }
+  // Le contenu Site A est du HTML brut. On bascule sur l'onglet "Code"
+  // (mode Texte) et on colle dans textarea#content tel quel, pour que
+  // WordPress enregistre le HTML sans le re-encoder via TinyMCE/Visuel.
 
-  // 2) Bascule onglet "Texte" si dispo (TinyMCE pas encore prêt mais textarea présent).
-  const htmlTab = page.locator("#content-html, button.switch-html").first();
-  if ((await htmlTab.count()) > 0) {
-    await htmlTab.click().catch(() => null);
+  // 1) Cliquer l'onglet "Code" (Texte). Plusieurs sélecteurs possibles selon la version WP.
+  const codeTabSelectors = [
+    "button#content-html",
+    "#content-html",
+    ".wp-switch-editor.switch-html",
+    "button.switch-html",
+  ];
+  let switched = false;
+  for (const sel of codeTabSelectors) {
+    const tab = page.locator(sel).first();
+    if ((await tab.count()) > 0) {
+      await tab.click({ timeout: 5_000 }).catch(() => null);
+      switched = true;
+      break;
+    }
   }
+  if (!switched) {
+    const byText = page.getByRole("button", { name: /^code$/i }).first();
+    if ((await byText.count()) > 0) {
+      await byText.click({ timeout: 5_000 }).catch(() => null);
+      switched = true;
+    }
+  }
+  if (switched) console.log("[actor] Onglet Code (Texte) activé");
+  else console.warn("[actor] Onglet Code introuvable, tentative directe sur textarea#content");
 
-  // 3) Écriture directe dans textarea#content, masqué ou non.
+  // 2) Attendre le textarea visible en mode Code, puis coller le HTML.
   const textarea = page.locator("textarea#content, textarea[name='content']").first();
-  if ((await textarea.count()) > 0) {
-    await textarea.evaluate((el, value) => {
-      const ta = el as HTMLTextAreaElement;
-      ta.value = value as string;
-      ta.dispatchEvent(new Event("input", { bubbles: true }));
-      ta.dispatchEvent(new Event("change", { bubbles: true }));
-    }, content);
-    console.log("[actor] Contenu injecté via textarea (JS, champ potentiellement masqué)");
+  try {
+    await textarea.waitFor({ state: "visible", timeout: 10_000 });
+    await textarea.fill(content, { timeout: 10_000 });
+    console.log("[actor] Contenu collé via onglet Code (fill)");
     return;
-  }
-
-  // 4) Dernier recours: iframe TinyMCE direct.
-  const frameEl = await page.$("iframe#content_ifr");
-  if (frameEl) {
-    const frame = (await frameEl.contentFrame()) as Frame | null;
-    if (frame) {
-      await frame.evaluate((html) => {
-        const body = document.body as HTMLElement;
-        body.innerHTML = html;
+  } catch {
+    if ((await textarea.count()) > 0) {
+      await textarea.evaluate((el, value) => {
+        const ta = el as HTMLTextAreaElement;
+        ta.value = value as string;
+        ta.dispatchEvent(new Event("input", { bubbles: true }));
+        ta.dispatchEvent(new Event("change", { bubbles: true }));
       }, content);
-      console.log("[actor] Contenu injecté via iframe TinyMCE (fallback)");
+      console.log("[actor] Contenu collé via onglet Code (js)");
       return;
     }
   }
-  console.warn("[actor] Aucun champ contenu détecté");
+
+  console.warn("[actor] textarea#content introuvable, contenu non inséré");
+  void ({} as Frame);
 }
 
 async function fillSlug(page: Page, slug: string): Promise<void> {
