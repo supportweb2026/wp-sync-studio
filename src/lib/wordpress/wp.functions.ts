@@ -256,10 +256,10 @@ export const fetchComparison = createServerFn({ method: "GET" })
       loadAuthForRole(context.supabase, context.userId, "source"),
       loadAuthForRole(context.supabase, context.userId, "destination"),
     ]);
-    if (!src || !dst) {
+    if (!src) {
       return {
         notConfigured: true as const,
-        missingSource: !src,
+        missingSource: true,
         missingDestination: !dst,
         rows: [],
         sourceTotal: 0,
@@ -270,6 +270,7 @@ export const fetchComparison = createServerFn({ method: "GET" })
         tags: [],
       };
     }
+
 
     const { listAllPosts } = await import(
       "@/services/wordpress/posts.server"
