@@ -1,56 +1,75 @@
-
-## Diagnostic
-
-L'Actor se connecte et atteint bien `Ajouter un article`, mais le sélecteur du titre timeout. La capture montre que Site B utilise :
-
-- **Éditeur Classique** (TinyMCE) avec onglets Visuel/Code, bouton « Ajouter un média ». Pas de Gutenberg.
-- **Champ titre** avec placeholder « Saisissez le titre » — l'id n'est probablement pas `#title` standard (sinon ça matcherait en 60s). Très probablement le thème a un input personnalisé.
-- **Champs ACF** spécifiques : `Date` (texte), `Image` (bouton « Ajouter une image ») — PAS la métabox WordPress « Image à la une ».
-- **Étiquettes = cases à cocher** (Conformité, Environnement, RSE, SOBRAGA…) dans un panneau latéral, pas un input texte type « newtag ».
-- **Publier** : bouton bleu `#publish` (ok).
-- **CPT slug réel** : `actualites` (déjà détecté automatiquement, ok).
-
-L'erreur actuelle vient du sélecteur titre + on tente Gutenberg / featured image standard qui n'existent pas ici.
-
 ## Plan de correction
 
-### 1. `apify-actor/src/createPost.ts` — refonte pour Site B Classique + ACF
+### Le vrai blocage actuel
 
-- **Attendre le formulaire** : `form#post`, `input[name='post_title']`, ou input avec `placeholder*='titre'` (timeout 90s) au lieu de `#title, .block-editor…`.
-- **Forcer le chemin Classique** : retirer toute la branche Gutenberg (`wp.data`, `.editor-post-title__input`, panneaux « Document », overlays plein écran) — inutile et source de timeouts.
-- **Remplir le titre** via `input[name='post_title']` puis fallback `input[placeholder*='titre' i]`.
-- **Contenu** : basculer en onglet Code (`button.switch-html`, `#content-html`) et écrire dans `textarea#content`. Si absent, fallback iframe TinyMCE (`#content_ifr` → `body#tinymce`).
-- **Slug** : conserver l'édition `#edit-slug-box` mais rendre tolérant (n'échoue pas si la box n'existe pas — certains thèmes la cachent).
-- **Auteur** : aucune action (déjà respecté, conserver le commentaire).
+L’Actor se connecte, mais l’URL `post-new.php?post_type=actualites` ne montre pas le formulaire attendu (timeout sur le champ titre, et `Champs détectés sur la page:` vide → la page n’a même pas de `form#post`). Il faut donc reproduire votre parcours manuel et diagnostiquer ce qui s’affiche réellement.
 
-### 2. Champs ACF (nouveau bloc dans `createPost.ts`)
+### 1. Reproduire votre parcours dans le back-office
 
-- **Date ACF** : repérer le label `Date` dans `.acf-field` ou la métabox « Champs Actualités » → remplir le `input[type='text']` enfant avec la date au format attendu (probablement `JJ/MM/AAAA` ou `AAAAMMJJ` selon ACF). On enverra `article.date` (ISO) reformaté ; si le champ refuse, on log un warning sans bloquer.
-- **Image ACF** : cliquer sur le bouton `Ajouter une image` à l'intérieur du champ ACF Image, puis réutiliser la modale média WP (logique déjà dans `uploadImage.ts`) pour téléverser depuis l'URL Site A, et confirmer avec « Sélectionner » au lieu de « Définir l'image à la une ».
-- Nouveau fichier interne ou fonction `setAcfFeaturedImageFromUrl(page, imageUrl)` ; on garde `setFeaturedImageFromUrl` pour compatibilité mais on appelle d'abord l'ACF si présent.
+Après login, l’Actor :
 
-### 3. Étiquettes (taxonomie checkbox)
+```text
+Menu Actualités → clic "Ajouter un article" → attend le formulaire
+```
 
-- Si `article.tagSlug` (ou nouveau `article.tagSlugs: string[]`) est fourni : dans la métabox `Étiquettes`, cocher la case dont le label correspond (case-insensitive). Si absente, l'ajouter via l'onglet `+ Ajouter une catégorie` visible en bas du panneau.
+Si l’URL directe ne donne pas le formulaire (page vide, redirection, blocage Sucuri, écran inattendu), il bascule sur la navigation par le menu comme vous le faites.
 
-### 4. `apify-actor/src/login.ts`
+### 2. Logs de diagnostic AVANT le timeout
 
-- Aucun changement, le login fonctionne.
+Avant d’attendre 90 s sur le titre, l’Actor journalisera :
 
-### 5. Sélection du CPT
+- URL réelle atteinte + titre de la page
+- présence/absence de `form#post`
+- liste des inputs visibles
+- détection d’un écran Sucuri / erreur WP / page vide
 
-- Déjà ok : `actualites` détecté. Ne plus écraser avec `actualite` dans l'input par défaut (`cptSlug` par défaut → `actualites`).
+Si ça échoue encore, on saura immédiatement où il est arrivé.
 
-### 6. Capture diagnostic
+### 3. Remplissage du formulaire (selon votre capture)
 
-- En cas d'échec, déjà : screenshot + HTML sauvegardés dans le KV store. Ajouter une ligne de log listant les `input[name]` présents sur la page pour accélérer le diagnostic futur.
+- Titre : `input[name='post_title']` (placeholder « Saisissez le titre »)
+- Contenu : éditeur Classique TinyMCE
+- Date ACF : champ texte du `.acf-field` « Date »
+- Étiquettes : cases à cocher
+- Bouton `#publish`
+- Auteur : non touché
 
-### 7. Déploiement
+### 4. Upload d’image ACF (réponse à votre question)
 
-- Le user pousse via GitHub → Apify rebuild → relance « Publier sur B » depuis l'app.
+Pas besoin d’ouvrir l’explorateur de fichiers système. Playwright écrit directement dans le `<input type="file">` masqué de la popup WordPress :
 
-## Notes techniques (pour info)
+```text
+1. Télécharger l'image depuis Site A en mémoire (fetch → buffer)
+2. Clic "Ajouter une image" (champ ACF) → popup média WP
+3. Clic onglet "Téléverser des fichiers"
+4. setInputFiles({name, mimeType, buffer}) sur l'input file caché
+   (n'ouvre PAS le gestionnaire de fichiers de l'OS)
+5. Attente vignette "sélectionnée"
+6. Clic bouton bleu "Sélectionner" pour valider dans le champ ACF
+```
 
-- Aucun changement côté Lovable/TanStack ; tout le correctif est dans `apify-actor/`.
-- Fichiers modifiés : `apify-actor/src/createPost.ts`, `apify-actor/src/uploadImage.ts`, `apify-actor/.actor/input_schema.json` (default `cptSlug` → `actualites`).
-- Pas de migration DB, pas de nouveau secret.
+C’est déjà ce que fait `uploadImage.ts` — donc pas de changement côté upload.
+
+### 5. Alignement CPT par défaut
+
+Mettre `actualites` (et non `actualite`) en valeur par défaut pour éviter la confusion dans les logs.
+
+### 6. Validation attendue dans Apify
+
+```text
+[actor] Connexion OK
+[actor] Ouverture Actualités via le menu
+[actor] Formulaire actualité détecté (URL=..., title=...)
+[actor] Titre rempli / Contenu rempli / Date remplie
+[actor] Image ACF téléversée
+[actor] Publication confirmée
+```
+
+Si l’écran réel diffère, les logs diront exactement quelle page a été atteinte au lieu d’un timeout muet.
+
+### Fichiers touchés
+
+- `apify-actor/src/createPost.ts` (navigation par menu + logs diagnostic + remplissage)
+- `apify-actor/.actor/input_schema.json` (défaut `cptSlug` → `actualites`)
+- Pas de changement à `uploadImage.ts` ni à `login.ts`
+- Aucun changement côté app Lovable / DB / secrets

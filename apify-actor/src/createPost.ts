@@ -22,24 +22,23 @@ export async function createOrUpdatePost(
   existingPostId: number | null,
 ): Promise<CreatedPost> {
   const base = siteUrl.replace(/\/+$/, "");
-  const target = existingPostId
-    ? `${base}/wp-admin/post.php?post=${existingPostId}&action=edit`
-    : `${base}/wp-admin/post-new.php?post_type=${encodeURIComponent(cptSlug)}`;
-  await page.goto(target, { waitUntil: "domcontentloaded", timeout: 60_000 });
 
-  // Attendre le formulaire d'édition (Classique). On utilise des sélecteurs
-  // larges puis on retombe sur le DOM réel pour logguer les inputs disponibles.
+  if (existingPostId) {
+    const target = `${base}/wp-admin/post.php?post=${existingPostId}&action=edit`;
+    await page.goto(target, { waitUntil: "domcontentloaded", timeout: 60_000 });
+  } else {
+    await openNewPostForm(page, base, cptSlug);
+  }
+
+  // Attendre le formulaire d'édition (Classique).
   try {
     await page.waitForSelector(
       "form#post, input[name='post_title'], input[placeholder*='titre' i], input[placeholder*='title' i]",
-      { timeout: 90_000 },
+      { timeout: 45_000 },
     );
+    console.log(`[actor] Formulaire actualité détecté (url=${page.url()})`);
   } catch (err) {
-    const names = await page
-      .locator("form#post input, form#post textarea")
-      .evaluateAll((els) => els.slice(0, 20).map((e) => (e as HTMLInputElement).name || e.id || (e as HTMLElement).tagName))
-      .catch(() => [] as string[]);
-    console.error("[actor] Champs détectés sur la page:", names.join(", "));
+    await dumpPageDiagnostics(page);
     throw err;
   }
 
@@ -197,4 +196,79 @@ async function publishOrUpdate(page: Page, isUpdate: boolean): Promise<void> {
     { timeout: 90_000 },
   );
   void isUpdate;
+}
+
+/**
+ * Ouvre le formulaire "Ajouter un article" en essayant d'abord l'URL directe,
+ * puis en cliquant dans le menu WordPress (Actualités → Ajouter un article)
+ * si l'URL directe n'affiche pas le formulaire (Sucuri, redirection, etc.).
+ */
+async function openNewPostForm(page: Page, base: string, cptSlug: string): Promise<void> {
+  const directUrl = `${base}/wp-admin/post-new.php?post_type=${encodeURIComponent(cptSlug)}`;
+  console.log(`[actor] Ouverture directe: ${directUrl}`);
+  await page.goto(directUrl, { waitUntil: "domcontentloaded", timeout: 60_000 });
+
+  // Tentative rapide : si le formulaire apparaît en 8s, on s'arrête là.
+  try {
+    await page.waitForSelector("form#post input[name='post_title']", { timeout: 8_000 });
+    return;
+  } catch {
+    /* fallback navigation par menu */
+  }
+
+  console.log("[actor] URL directe sans formulaire, navigation via menu Actualités");
+  // Aller au dashboard pour avoir le menu admin de manière fiable
+  await page.goto(`${base}/wp-admin/`, { waitUntil: "domcontentloaded", timeout: 60_000 });
+
+  // Hover sur l'item "Actualités" puis clic sur "Ajouter un article"
+  const menuItem = page
+    .locator(`#adminmenu a[href*='post_type=${cptSlug}']`)
+    .first();
+  if ((await menuItem.count()) === 0) {
+    // Fallback par texte
+    const byText = page.locator("#adminmenu a").filter({ hasText: /actualit/i }).first();
+    if ((await byText.count()) > 0) await byText.hover().catch(() => null);
+  } else {
+    await menuItem.hover().catch(() => null);
+  }
+
+  const addLink = page
+    .locator(`#adminmenu a[href*='post-new.php?post_type=${cptSlug}']`)
+    .first();
+  if ((await addLink.count()) > 0) {
+    await Promise.all([
+      page.waitForLoadState("domcontentloaded"),
+      addLink.click({ timeout: 10_000 }),
+    ]).catch(() => null);
+  } else {
+    // Dernier recours: relancer la navigation directe
+    await page.goto(directUrl, { waitUntil: "domcontentloaded", timeout: 60_000 });
+  }
+}
+
+async function dumpPageDiagnostics(page: Page): Promise<void> {
+  try {
+    const url = page.url();
+    const title = await page.title().catch(() => "");
+    const bodyClass = await page.locator("body").first().getAttribute("class").catch(() => "");
+    const hasForm = (await page.locator("form#post").count()) > 0;
+    const inputs = await page
+      .locator("input, textarea")
+      .evaluateAll((els) =>
+        els.slice(0, 30).map((e) => {
+          const el = e as HTMLInputElement;
+          return `${el.tagName.toLowerCase()}[name=${el.name || ""}|id=${el.id || ""}|ph=${el.placeholder || ""}]`;
+        }),
+      )
+      .catch(() => [] as string[]);
+    const sucuri = /sucuri|access denied|blocked/i.test(
+      (await page.content().catch(() => "")).slice(0, 5000),
+    );
+    console.error(`[actor] Diagnostic page: url=${url}`);
+    console.error(`[actor] Diagnostic page: title="${title}" bodyClass="${bodyClass}"`);
+    console.error(`[actor] Diagnostic page: form#post=${hasForm} sucuriDetected=${sucuri}`);
+    console.error(`[actor] Diagnostic page inputs: ${inputs.join(" | ") || "(aucun)"}`);
+  } catch (e) {
+    console.error("[actor] Diagnostic échoué:", e instanceof Error ? e.message : e);
+  }
 }
