@@ -1,36 +1,22 @@
-## Problème
+Le problème n'est pas WordPress ni vos identifiants : l'Actor Apify démarre, mais le navigateur Playwright ne trouve pas le bon Chromium. La cause restante est le `package-lock.json` : même si `package.json` a été corrigé, le lockfile contient encore `playwright: ^1.48.0`, donc Apify continue probablement à réinstaller une version incompatible.
 
-L'Actor démarre bien (le bootstrap fonctionne, l'input est lu), mais Playwright plante au lancement du navigateur :
+Plan de correction ciblé :
 
-```
-Executable doesn't exist at /pw-browsers/chromium_headless_shell-1228/chrome-headless-shell-linux64/chrome-headless-shell
-```
+1. Corriger le lockfile Apify
+   - Mettre `apify-actor/package-lock.json` en cohérence avec `apify-actor/package.json`.
+   - Supprimer toute dépendance directe à `playwright` dans la racine du lockfile.
+   - Garder seulement `apify`, `typescript` et les dépendances nécessaires au build.
 
-L'image de base `apify/actor-node-playwright-chrome:20` embarque déjà Playwright **et** un Chromium pré-installé à une version précise. En ajoutant `playwright: ^1.48.0` dans `apify-actor/package.json`, npm installe une autre version de Playwright qui cherche un binaire Chromium (build `1228`) qui n'existe pas dans l'image. Résultat : Playwright trouvé, Chromium introuvable.
+2. Ne plus dépendre du Chromium Playwright téléchargé
+   - Modifier le lancement navigateur dans `apify-actor/src/actor.ts` pour utiliser explicitement le Chrome fourni par l'image Apify : `/usr/bin/google-chrome` via `APIFY_CHROME_EXECUTABLE_PATH`.
+   - Cela évite définitivement l'erreur `/pw-browsers/chromium_headless_shell-1228/... Executable doesn't exist`.
 
-## Correction
+3. Rendre l'erreur de build/run plus lisible
+   - Ajouter un log au démarrage indiquant le chemin navigateur utilisé.
+   - Si Chrome est absent, l'Actor échouera avec un message clair au lieu d'une erreur Playwright confuse.
 
-Une seule modification : **arrêter de réinstaller Playwright**, utiliser celui de l'image.
+4. Étapes après implémentation
+   - Vous devrez seulement pousser les changements sur GitHub pour relancer le build Apify.
+   - Puis tester depuis l'app avec “Tester la connexion” ou publier un article.
 
-### `apify-actor/package.json`
-- Retirer `playwright` des `dependencies` (l'image le fournit déjà avec le bon Chromium).
-- Garder `apify` et `typescript`.
-
-### Pas d'autre changement nécessaire
-- Le code source continue d'importer `playwright` normalement : Node le résout via le `node_modules` global de l'image.
-- Le Dockerfile reste identique.
-- `tsconfig.json` reste identique.
-
-## Vérification
-
-Après push GitHub → rebuild Apify → relancer un run `mode=login-check`. Les logs doivent montrer :
-- `[actor] Navigateur Playwright lancé`
-- puis l'étape de login WordPress.
-
-Si jamais TypeScript râle au build parce qu'il ne trouve plus les types `playwright`, on ajoutera `@types/node` côté `dependencies` (les types Playwright sont fournis par le package lui-même, présent dans l'image). En cas de problème de résolution, le repli est d'ajouter `"playwright": "*"` en `peerDependencies` pour la doc, sans le réinstaller.
-
-## Étape côté utilisateur
-
-1. Lovable applique le changement à `apify-actor/package.json`.
-2. Push GitHub (déclenche le rebuild Apify automatiquement).
-3. Sur `/migration`, cliquer **Tester la connexion**.
+Ce plan est volontairement minimal : pas de refonte, pas de changement UI, pas de nouvelle fonctionnalité — uniquement la correction de l'erreur Apify actuelle.

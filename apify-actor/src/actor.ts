@@ -1,5 +1,6 @@
 import { Actor } from "apify";
-import { chromium, type Browser, type BrowserContext, type Page } from "playwright";
+import { existsSync } from "node:fs";
+import { chromium, type Browser, type BrowserContext, type Page } from "playwright-core";
 import type {
   ActorInput,
   ActorMode,
@@ -36,7 +37,13 @@ export async function runActor(): Promise<void> {
     console.log(`[actor] Input chargé: mode=${mode}, site=${cfg.siteUrl}, cpt=${cptSlug}`);
 
     stage = "lancement du navigateur Playwright";
+    const chromeExecutablePath = process.env.APIFY_CHROME_EXECUTABLE_PATH ?? "/usr/bin/google-chrome";
+    console.log(`[actor] Chemin Chrome utilisé: ${chromeExecutablePath}`);
+    if (!existsSync(chromeExecutablePath)) {
+      throw new Error(`Chrome introuvable à ${chromeExecutablePath}`);
+    }
     browser = await chromium.launch({
+      executablePath: chromeExecutablePath,
       headless: true,
       args: ["--no-sandbox", "--disable-dev-shm-usage"],
     });
