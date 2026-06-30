@@ -3,6 +3,13 @@
   "type": "object",
   "schemaVersion": 1,
   "properties": {
+    "mode": {
+      "title": "Mode",
+      "type": "string",
+      "editor": "select",
+      "enum": ["publish", "login-check", "list-posts"],
+      "default": "publish"
+    },
     "siteUrl": { "title": "Site URL", "type": "string", "editor": "textfield" },
     "username": { "title": "Username", "type": "string", "editor": "textfield" },
     "password": { "title": "Password", "type": "string", "editor": "textfield", "isSecret": true },
@@ -16,10 +23,10 @@
       "default": "skip"
     },
     "article": {
-      "title": "Article",
+      "title": "Article (mode=publish)",
       "type": "object",
       "editor": "json"
     }
   },
-  "required": ["siteUrl", "username", "password", "article"]
+  "required": ["siteUrl", "username", "password"]
 }
