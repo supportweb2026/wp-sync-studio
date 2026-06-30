@@ -91,8 +91,19 @@ async function fillTitle(page: Page, title: string): Promise<void> {
   ];
   for (const sel of selectors) {
     const loc = page.locator(sel).first();
-    if ((await loc.count()) > 0) {
-      await loc.fill(title);
+    if ((await loc.count()) === 0) continue;
+    try {
+      await loc.fill(title, { timeout: 5_000 });
+      console.log(`[actor] Titre rempli via fill() sur ${sel}`);
+      return;
+    } catch {
+      await loc.evaluate((el, value) => {
+        const input = el as HTMLInputElement;
+        input.value = value as string;
+        input.dispatchEvent(new Event("input", { bubbles: true }));
+        input.dispatchEvent(new Event("change", { bubbles: true }));
+      }, title);
+      console.log(`[actor] Titre rempli via JS (champ masqué) sur ${sel}`);
       return;
     }
   }
@@ -100,17 +111,44 @@ async function fillTitle(page: Page, title: string): Promise<void> {
 }
 
 async function fillContent(page: Page, content: string): Promise<void> {
-  // Onglet "Code" / HTML pour injecter directement.
+  // 1) TinyMCE actif → API officielle, plus fiable et invisible.
+  const hasTinymce = await page
+    .evaluate(() => {
+      // @ts-expect-error tinymce global injecté par WP
+      return typeof window.tinymce !== "undefined" && !!window.tinymce.get("content");
+    })
+    .catch(() => false);
+  if (hasTinymce) {
+    await page.evaluate((html) => {
+      // @ts-expect-error tinymce global
+      const ed = window.tinymce.get("content");
+      ed.setContent(html);
+      ed.save();
+    }, content);
+    console.log("[actor] Contenu injecté via TinyMCE API");
+    return;
+  }
+
+  // 2) Bascule onglet "Texte" si dispo (TinyMCE pas encore prêt mais textarea présent).
   const htmlTab = page.locator("#content-html, button.switch-html").first();
   if ((await htmlTab.count()) > 0) {
     await htmlTab.click().catch(() => null);
-    const textarea = page.locator("textarea#content").first();
-    if ((await textarea.count()) > 0) {
-      await textarea.fill(content);
-      return;
-    }
   }
-  // Fallback : iframe TinyMCE
+
+  // 3) Écriture directe dans textarea#content, masqué ou non.
+  const textarea = page.locator("textarea#content, textarea[name='content']").first();
+  if ((await textarea.count()) > 0) {
+    await textarea.evaluate((el, value) => {
+      const ta = el as HTMLTextAreaElement;
+      ta.value = value as string;
+      ta.dispatchEvent(new Event("input", { bubbles: true }));
+      ta.dispatchEvent(new Event("change", { bubbles: true }));
+    }, content);
+    console.log("[actor] Contenu injecté via textarea (JS, champ potentiellement masqué)");
+    return;
+  }
+
+  // 4) Dernier recours: iframe TinyMCE direct.
   const frameEl = await page.$("iframe#content_ifr");
   if (frameEl) {
     const frame = (await frameEl.contentFrame()) as Frame | null;
@@ -119,12 +157,11 @@ async function fillContent(page: Page, content: string): Promise<void> {
         const body = document.body as HTMLElement;
         body.innerHTML = html;
       }, content);
+      console.log("[actor] Contenu injecté via iframe TinyMCE (fallback)");
       return;
     }
   }
-  // Dernier recours
-  const ta = page.locator("textarea#content, textarea[name='content']").first();
-  if ((await ta.count()) > 0) await ta.fill(content);
+  console.warn("[actor] Aucun champ contenu détecté");
 }
 
 async function fillSlug(page: Page, slug: string): Promise<void> {
