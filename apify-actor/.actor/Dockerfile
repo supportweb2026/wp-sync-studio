@@ -1,8 +1,9 @@
 FROM apify/actor-node-playwright-chrome:20
 
 COPY --chown=myuser package*.json ./
-RUN npm install --omit=dev --no-audit --no-fund
+RUN npm install --no-audit --no-fund
 
 COPY --chown=myuser . ./
+RUN npm run build
 
-CMD ["node", "--import", "tsx/esm", "src/main.ts"]
+CMD ["node", "dist/main.js"]
