@@ -288,16 +288,23 @@ export const fetchComparison = createServerFn({ method: "GET" })
       "@/lib/site-b/apify-internal.server"
     );
 
-    const destPromise = runApifyListPosts({
-      siteUrl: dst.siteUrl,
-      username: dst.username,
-      password: dst.appPassword,
-      loginPath: dst.loginPath ?? "/wp-admin",
-    }).catch((e: unknown) => ({
-      ok: false as const,
-      posts: [] as WpPost[],
-      error: e instanceof Error ? e.message : String(e),
-    }));
+    const destPromise = dst
+      ? runApifyListPosts({
+          siteUrl: dst.siteUrl,
+          username: dst.username,
+          password: dst.appPassword,
+          loginPath: dst.loginPath ?? "/wp-admin",
+        }).catch((e: unknown) => ({
+          ok: false as const,
+          posts: [] as WpPost[],
+          error: e instanceof Error ? e.message : String(e),
+        }))
+      : Promise.resolve({
+          ok: false as const,
+          posts: [] as WpPost[],
+          error: "Destination non configurée",
+        });
+
 
     const [sourcePosts, sourceUsers, sourceCats, sourceTags, destResult] =
       await Promise.all([
