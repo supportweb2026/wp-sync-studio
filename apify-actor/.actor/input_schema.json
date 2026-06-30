@@ -5,18 +5,48 @@
   "properties": {
     "mode": {
       "title": "Mode",
+      "description": "Run mode: publish an article or just check the WordPress login",
       "type": "string",
       "editor": "select",
       "enum": ["publish", "login-check"],
       "default": "publish"
     },
-    "siteUrl": { "title": "Site URL", "type": "string", "editor": "textfield" },
-    "username": { "title": "Username", "type": "string", "editor": "textfield" },
-    "password": { "title": "Password", "type": "string", "editor": "textfield", "isSecret": true },
-    "loginPath": { "title": "Login path", "type": "string", "editor": "textfield", "default": "/wp-admin" },
-    "cptSlug": { "title": "CPT slug", "type": "string", "editor": "textfield", "default": "actualite" },
+    "siteUrl": {
+      "title": "Site URL",
+      "description": "WordPress admin URL of the destination site",
+      "type": "string",
+      "editor": "textfield"
+    },
+    "username": {
+      "title": "Username",
+      "description": "WordPress admin username",
+      "type": "string",
+      "editor": "textfield"
+    },
+    "password": {
+      "title": "Password",
+      "description": "WordPress admin password",
+      "type": "string",
+      "editor": "textfield",
+      "isSecret": true
+    },
+    "loginPath": {
+      "title": "Login path",
+      "description": "Path to the WordPress login page",
+      "type": "string",
+      "editor": "textfield",
+      "default": "/wp-admin"
+    },
+    "cptSlug": {
+      "title": "CPT slug",
+      "description": "Post type slug for the news/actualites custom post type",
+      "type": "string",
+      "editor": "textfield",
+      "default": "actualite"
+    },
     "duplicateStrategy": {
       "title": "Duplicate strategy",
+      "description": "What to do when an article with the same slug already exists",
       "type": "string",
       "editor": "select",
       "enum": ["skip", "overwrite", "copy"],
@@ -24,6 +54,7 @@
     },
     "article": {
       "title": "Article (mode=publish)",
+      "description": "Article data to publish on the destination site",
       "type": "object",
       "editor": "json"
     }

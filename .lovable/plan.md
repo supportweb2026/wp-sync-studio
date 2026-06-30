@@ -1,34 +1,35 @@
-Objectif : faire en sorte que l’Actor Apify démarre toujours avec des logs exploitables, puis publie réellement l’article Site A vers Site B.
+## Problème
+Le build Apify échoue maintenant avec une erreur de validation du schéma d’input :
 
-Plan d’implémentation ciblé :
-
-1. Remplacer le démarrage actuel par un bootstrap minimal
-   - Créer un point d’entrée très simple qui logue immédiatement au lancement du conteneur.
-   - Charger ensuite le vrai code de publication avec un import dynamique.
-   - Résultat : si `apify`, `playwright`, TypeScript/ESM ou un import interne plante, l’erreur sera capturée et visible dans Apify au lieu de s’arrêter à `LIMITED_PERMISSIONS`.
-
-2. Séparer le code principal de l’Actor
-   - Déplacer la logique actuelle de `main.ts` dans un module interne dédié.
-   - Garder `main.ts` comme bootstrap robuste.
-   - Cela évite qu’un import statique plante avant le premier `console.log`.
-
-3. Durcir le Dockerfile Apify
-   - Vérifier pendant le build que les fichiers compilés existent bien dans `dist`.
-   - Exécuter explicitement `node ./dist/main.js`.
-   - Ajouter un `npm prune --omit=dev` après build pour garder l’image propre mais conserver les dépendances runtime nécessaires.
-
-4. Corriger la configuration Apify si nécessaire
-   - Vérifier que le Dockerfile est bien référencé depuis `.actor/actor.json`.
-   - Garder une image Apify Playwright compatible Node 20.
-
-5. Vérifier avant de te redemander `apify push`
-   - Compiler uniquement le sous-projet `apify-actor`.
-   - Confirmer que le build produit bien `dist/main.js` et le module interne.
-   - Ensuite seulement, tu devras refaire :
-
-```bash
-cd apify-actor
-apify push
+```text
+.apify-actor Field schema.properties.mode.description is required
 ```
 
-Après ça, si le problème vient encore de WordPress/Sucuri/login/upload, le journal affichera enfin l’étape exacte. Mais le blocage silencieux à `LIMITED_PERMISSIONS` sera éliminé.
+Le champ `mode` dans `apify-actor/.actor/input_schema.json` n’a pas de propriété `description`.
+
+## Plan
+1. Ajouter `"description"` au champ `mode` (et aux autres champs pour éviter d’éventuelles erreurs similaires).
+2. Vérifier que le JSON reste valide.
+3. Demander à l’utilisateur de relancer le build Apify.
+
+## Fichier modifié
+- `apify-actor/.actor/input_schema.json`
+
+## Détail de la modification
+Le champ `mode` deviendra :
+
+```json
+"mode": {
+  "title": "Mode",
+  "description": "Run mode: publish an article or just check the WordPress login",
+  "type": "string",
+  "editor": "select",
+  "enum": ["publish", "login-check"],
+  "default": "publish"
+}
+```
+
+Les autres champs recevront également une description pour anticiper les règles de validation Apify.
+
+## Après modification
+Relancer le build depuis Apify (ou refaire `apify push` si tu déploies via CLI) pour confirmer que l’erreur de schéma disparaît.
