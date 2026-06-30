@@ -110,6 +110,6 @@ export async function loadDestAuthFromDb(
     siteUrl: row.site_url,
     username: row.username,
     password: await decryptSecret(row.app_password_encrypted),
-    loginPath: row.last_capabilities?.loginPath ?? "/wp-admin",
+    loginPath: row.last_capabilities?.loginPath ?? "",
   };
 }
