@@ -174,7 +174,7 @@ function DestinationForm({ current }: { current?: PublicConnection }) {
     mutationFn: () => remove({ data: { role: "destination" } }),
     onSuccess: () => {
       toast.success("Site B supprimé");
-      setSiteUrl(""); setUsername(""); setAppPassword(""); setLoginPath("/wp-admin");
+      setSiteUrl(""); setUsername(""); setAppPassword(""); setLoginPath("");
       qc.invalidateQueries({ queryKey: ["connections"] });
     },
   });
