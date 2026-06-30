@@ -30,6 +30,9 @@ function Dashboard() {
   const dst = conns.data.find((c) => c.role === "destination");
   const lastRun = history.data[0];
 
+  const srcCaps = src?.capabilities && !("kind" in src.capabilities) ? src.capabilities : null;
+  const dstCaps = dst?.capabilities && "kind" in dst.capabilities ? dst.capabilities : null;
+
   return (
     <div className="space-y-6">
       <header className="flex items-start justify-between">
@@ -44,12 +47,12 @@ function Dashboard() {
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
         <StatCard
           title="Articles Site A"
-          value={src?.capabilities?.totalPosts ?? "—"}
+          value={srcCaps?.totalPosts ?? "—"}
           hint={src ? src.siteUrl.replace(/^https?:\/\//, "") : "Non configuré"}
         />
         <StatCard
-          title="Articles Site B"
-          value={dst?.capabilities?.totalPosts ?? "—"}
+          title="Site B (Apify)"
+          value={dstCaps ? (dstCaps.loginOk ? "OK" : "KO") : "—"}
           hint={dst ? dst.siteUrl.replace(/^https?:\/\//, "") : "Non configuré"}
         />
         <StatCard
@@ -69,9 +72,27 @@ function Dashboard() {
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-        <ConnectionSummary role="source" label="Site source" connection={src} />
-        <ConnectionSummary role="destination" label="Site destination" connection={dst} />
+        <ConnectionSummary
+          role="source"
+          label="Site A — source (REST)"
+          siteUrl={src?.siteUrl ?? null}
+          badges={srcCaps ? [
+            { label: "API", ok: srcCaps.reachable },
+            { label: "Édition", ok: srcCaps.canEditPosts },
+            { label: "Upload", ok: srcCaps.canUploadFiles },
+          ] : null}
+        />
+        <ConnectionSummary
+          role="destination"
+          label="Site B — destination (Apify)"
+          siteUrl={dst?.siteUrl ?? null}
+          badges={dstCaps ? [
+            { label: "Login", ok: dstCaps.loginOk },
+            { label: "Dashboard", ok: dstCaps.dashboardReachable },
+          ] : null}
+        />
       </div>
+
 
       <Card>
         <CardHeader className="flex flex-row items-center justify-between">
@@ -130,11 +151,13 @@ function StatCard({ title, value, hint }: { title: string; value: string | numbe
 function ConnectionSummary({
   role,
   label,
-  connection,
+  siteUrl,
+  badges,
 }: {
   role: "source" | "destination";
   label: string;
-  connection: { siteUrl: string; capabilities: { reachable: boolean; canEditPosts: boolean; canUploadFiles: boolean } | null } | undefined;
+  siteUrl: string | null;
+  badges: Array<{ label: string; ok: boolean }> | null;
 }) {
   return (
     <Card>
@@ -145,13 +168,13 @@ function ConnectionSummary({
         </CardTitle>
       </CardHeader>
       <CardContent>
-        {connection ? (
+        {siteUrl ? (
           <div className="space-y-2 text-sm">
-            <div className="font-mono text-xs break-all">{connection.siteUrl}</div>
+            <div className="font-mono text-xs break-all">{siteUrl}</div>
             <div className="flex flex-wrap gap-1.5">
-              <CapBadge ok={connection.capabilities?.reachable ?? false} label="API" />
-              <CapBadge ok={connection.capabilities?.canEditPosts ?? false} label="Édition" />
-              <CapBadge ok={connection.capabilities?.canUploadFiles ?? false} label="Upload" />
+              {(badges ?? []).map((b) => (
+                <CapBadge key={b.label} ok={b.ok} label={b.label} />
+              ))}
             </div>
           </div>
         ) : (
@@ -177,3 +200,4 @@ function CapBadge({ ok, label }: { ok: boolean; label: string }) {
     </Badge>
   );
 }
+
