@@ -42,7 +42,7 @@
       "description": "Post type slug for the news/actualites custom post type",
       "type": "string",
       "editor": "textfield",
-      "default": "actualite"
+      "default": "actualites"
     },
     "duplicateStrategy": {
       "title": "Duplicate strategy",
