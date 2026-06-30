@@ -1,0 +1,25 @@
+{
+  "title": "WP Site B Publisher",
+  "type": "object",
+  "schemaVersion": 1,
+  "properties": {
+    "siteUrl": { "title": "Site URL", "type": "string", "editor": "textfield" },
+    "username": { "title": "Username", "type": "string", "editor": "textfield" },
+    "password": { "title": "Password", "type": "string", "editor": "textfield", "isSecret": true },
+    "loginPath": { "title": "Login path", "type": "string", "editor": "textfield", "default": "/wp-admin" },
+    "cptSlug": { "title": "CPT slug", "type": "string", "editor": "textfield", "default": "actualite" },
+    "duplicateStrategy": {
+      "title": "Duplicate strategy",
+      "type": "string",
+      "editor": "select",
+      "enum": ["skip", "overwrite", "copy"],
+      "default": "skip"
+    },
+    "article": {
+      "title": "Article",
+      "type": "object",
+      "editor": "json"
+    }
+  },
+  "required": ["siteUrl", "username", "password", "article"]
+}
