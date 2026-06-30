@@ -16,12 +16,12 @@ export interface CreatedPost {
 
 export async function createOrUpdatePost(
   page: Page,
-  siteUrl: string,
+  adminBaseUrl: string,
   cptSlug: string,
   article: ActorArticle,
   existingPostId: number | null,
 ): Promise<CreatedPost> {
-  const base = siteUrl.replace(/\/+$/, "");
+  const base = adminBaseUrl.replace(/\/+$/, "");
 
   if (existingPostId) {
     const target = `${base}/wp-admin/post.php?post=${existingPostId}&action=edit`;
@@ -206,6 +206,7 @@ async function publishOrUpdate(page: Page, isUpdate: boolean): Promise<void> {
 async function openNewPostForm(page: Page, base: string, cptSlug: string): Promise<void> {
   const directUrl = `${base}/wp-admin/post-new.php?post_type=${encodeURIComponent(cptSlug)}`;
   console.log("[actor] Ouverture Actualités via le menu WordPress");
+  console.log(`[actor] URL Ajouter un article attendue: ${directUrl}`);
   await page.goto(`${base}/wp-admin/`, { waitUntil: "domcontentloaded", timeout: 60_000 });
 
   const menuItem = page.locator(`#adminmenu a[href*='post_type=${cptSlug}']`).first();

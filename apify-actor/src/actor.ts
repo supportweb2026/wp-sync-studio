@@ -60,6 +60,9 @@ export async function runActor(): Promise<void> {
 
     stage = "connexion au back-office WordPress";
     await login(page, cfg.siteUrl, loginPath, cfg.username, cfg.password);
+    const adminBaseUrl = await resolveAdminBaseUrl(page, cfg.siteUrl);
+    console.log(`[actor] Base admin WordPress détectée: ${adminBaseUrl}`);
+    await page.goto(`${adminBaseUrl}/wp-admin/`, { waitUntil: "domcontentloaded", timeout: 60_000 }).catch(() => null);
     cptSlug = await resolveActualitesPostType(page, cptSlug);
 
     if (mode === "login-check") {
@@ -72,7 +75,7 @@ export async function runActor(): Promise<void> {
     } else {
       if (!cfg.article) throw new Error("Champ 'article' manquant pour mode publish");
       stage = `recherche d'un doublon pour le slug ${cfg.article.slug}`;
-      const existing = await findBySlug(page, cfg.siteUrl, cptSlug, cfg.article.slug);
+      const existing = await findBySlug(page, adminBaseUrl, cptSlug, cfg.article.slug);
 
       if (existing && dupStrategy === "skip") {
         output = { ok: true, skipped: true, postId: existing.postId };
@@ -84,7 +87,7 @@ export async function runActor(): Promise<void> {
         const targetId = existing && dupStrategy === "overwrite" ? existing.postId : null;
         // NOTE: l'auteur du post n'est jamais modifié — Site B garde son auteur par défaut.
         stage = targetId ? `mise à jour de l'actualité ${targetId}` : "création de l'actualité";
-        const created = await createOrUpdatePost(page, cfg.siteUrl, cptSlug, articleToPost, targetId);
+        const created = await createOrUpdatePost(page, adminBaseUrl, cptSlug, articleToPost, targetId);
         output = { ok: true, skipped: false, postId: created.postId, postUrl: created.postUrl };
       }
     }
@@ -116,6 +119,57 @@ export async function runActor(): Promise<void> {
     await Actor.pushData(output);
     console.log("[actor] Résultat écrit dans le dataset", output.ok ? "ok" : "failed");
     await Actor.exit();
+  }
+}
+
+async function resolveAdminBaseUrl(page: Page, siteUrl: string): Promise<string> {
+  const fromUrl = adminBaseFromUrl(page.url());
+  if (fromUrl) return fromUrl;
+
+  const adminHref = await page
+    .locator("a[href*='/wp-admin/'], a[href*='post-new.php'], a[href*='edit.php?post_type=']")
+    .evaluateAll((anchors) => anchors.map((a) => (a as HTMLAnchorElement).href).filter(Boolean))
+    .then((hrefs) => hrefs.find((href) => href.includes("/wp-admin/")) ?? null)
+    .catch(() => null);
+
+  const fromLink = adminHref ? adminBaseFromUrl(adminHref) : null;
+  if (fromLink) return fromLink;
+
+  const specialCase = adminBaseFromKnownLoginUrl(siteUrl);
+  if (specialCase) {
+    console.warn(`[actor] Base admin déduite depuis l'URL de login: ${specialCase}`);
+    return specialCase;
+  }
+
+  const fallback = siteUrl.replace(/\/+$/, "");
+  console.warn(
+    `[actor] Base admin non détectée depuis la session; fallback utilisé: ${fallback}. ` +
+      `Si le login est sur /adsobra mais l'admin sur /wp, vérifiez que la page connectée expose un lien wp-admin.`,
+  );
+  return fallback;
+}
+
+function adminBaseFromKnownLoginUrl(rawUrl: string): string | null {
+  try {
+    const url = new URL(rawUrl);
+    if (url.pathname.replace(/\/+$/, "") === "/adsobra") {
+      return `${url.origin}/wp`;
+    }
+    return null;
+  } catch {
+    return null;
+  }
+}
+
+function adminBaseFromUrl(rawUrl: string): string | null {
+  try {
+    const url = new URL(rawUrl);
+    const marker = "/wp-admin";
+    const idx = url.pathname.indexOf(marker);
+    if (idx === -1) return null;
+    return `${url.origin}${url.pathname.slice(0, idx).replace(/\/+$/, "")}`;
+  } catch {
+    return null;
   }
 }
 
