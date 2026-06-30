@@ -1,44 +1,35 @@
 import { createFileRoute, Link } from "@tanstack/react-router";
 import { useEffect, useState } from "react";
 import { useServerFn } from "@tanstack/react-start";
-import { useMutation } from "@tanstack/react-query";
-import { runMigrationFn } from "@/lib/wordpress/wp.functions";
+import { useMutation, useSuspenseQuery } from "@tanstack/react-query";
+import { queryOptions } from "@tanstack/react-query";
 import { runSiteBApifyBatch } from "@/lib/site-b/apify-batch.functions";
+import { getApifyActorStatus } from "@/lib/site-b/apify.functions";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
-import { Checkbox } from "@/components/ui/checkbox";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Label } from "@/components/ui/label";
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
-import { Progress } from "@/components/ui/progress";
 import { Badge } from "@/components/ui/badge";
-import { Rocket, ScrollText, CheckCircle2, XCircle, Cloud } from "lucide-react";
+import { Alert, AlertDescription } from "@/components/ui/alert";
+import { Cloud, CheckCircle2, XCircle, ArrowLeft, Settings } from "lucide-react";
 import { toast } from "sonner";
-import type { LogEntry } from "@/services/migration/pipeline.server";
-import type { MigrationReportItem } from "@/schemas/wordpress";
 
+const statusQueryOptions = queryOptions({
+  queryKey: ["apify-actor-status"],
+  queryFn: () => getApifyActorStatus(),
+});
 
 export const Route = createFileRoute("/_authenticated/migration")({
-  head: () => ({ meta: [{ title: "Migration — WP Sync Manager" }] }),
+  head: () => ({ meta: [{ title: "Publication Site B — WP Sync Manager" }] }),
   component: MigrationPage,
   errorComponent: ({ error }) => <div className="text-destructive">{error.message}</div>,
   notFoundComponent: () => <div>Introuvable</div>,
 });
 
 function MigrationPage() {
+  const { data: status } = useSuspenseQuery(statusQueryOptions);
   const [postIds, setPostIds] = useState<number[]>([]);
   const [duplicateStrategy, setDuplicateStrategy] = useState<"skip" | "overwrite" | "copy">("skip");
-  const [preserveSlug, setPreserveSlug] = useState(true);
-  const [preserveDate, setPreserveDate] = useState(true);
-  const [preserveStatus, setPreserveStatus] = useState(true);
-  const [preserveExcerpt, setPreserveExcerpt] = useState(true);
-  const [migrateFeaturedImage, setMigrateFeaturedImage] = useState(true);
-  const [migrateInlineImages, setMigrateInlineImages] = useState(true);
 
   useEffect(() => {
     try {
@@ -49,27 +40,11 @@ function MigrationPage() {
     }
   }, []);
 
-  const run = useServerFn(runMigrationFn);
+  const run = useServerFn(runSiteBApifyBatch);
   const mut = useMutation({
-    mutationFn: () =>
-      run({
-        data: {
-          postIds,
-          options: {
-            duplicateStrategy,
-            preserveSlug,
-            preserveDate,
-            preserveStatus,
-            preserveExcerpt,
-            migrateFeaturedImage,
-            migrateInlineImages,
-          },
-        },
-      }),
-    onSuccess: (res) => {
-      toast.success(`Migration: ${res.succeeded}/${res.total} réussis`);
-    },
-    onError: (e) => toast.error(e instanceof Error ? e.message : "Erreur"),
+    mutationFn: () => run({ data: { postIds, duplicateStrategy } }),
+    onSuccess: (res) => toast.success(`Apify: ${res.succeeded}/${res.total} publiés`),
+    onError: (e) => toast.error(e instanceof Error ? e.message : "Erreur Apify"),
   });
 
   const result = mut.data;
@@ -79,27 +54,40 @@ function MigrationPage() {
     <div className="space-y-6">
       <header className="flex items-start justify-between flex-wrap gap-4">
         <div>
-          <h1 className="text-2xl font-semibold tracking-tight">Migration</h1>
+          <h1 className="text-2xl font-semibold tracking-tight">Publication Site B</h1>
           <p className="text-sm text-muted-foreground mt-1">
             {postIds.length > 0
               ? `${postIds.length} article(s) sélectionné(s) depuis la comparaison.`
               : "Sélectionnez des articles depuis la page Comparaison."}
           </p>
         </div>
-        <Link to="/comparison" className="text-sm text-primary">
-          ← Retour à la comparaison
+        <Link to="/comparison" className="text-sm text-primary inline-flex items-center gap-1">
+          <ArrowLeft className="size-3" /> Retour à la comparaison
         </Link>
       </header>
+
+      <Alert variant={status.ready ? "default" : "destructive"}>
+        <Settings className="size-4" />
+        <AlertDescription>
+          {status.ready ? (
+            <>Actor Apify configuré (<code className="text-xs">{status.actorId}</code>).</>
+          ) : (
+            status.message
+          )}
+        </AlertDescription>
+      </Alert>
 
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
         <Card>
           <CardHeader>
             <CardTitle className="text-base">Options</CardTitle>
-            <CardDescription>Comportement de la migration article par article.</CardDescription>
+            <CardDescription>
+              Site B est protégé par Sucuri. Les articles sont publiés via Apify (automatisation cloud du back-office WordPress).
+            </CardDescription>
           </CardHeader>
           <CardContent className="space-y-4">
             <div className="space-y-1.5">
-              <Label>Stratégie en cas de doublon (même slug)</Label>
+              <Label>Si un article avec le même slug existe déjà</Label>
               <Select value={duplicateStrategy} onValueChange={(v) => setDuplicateStrategy(v as "skip" | "overwrite" | "copy")}>
                 <SelectTrigger><SelectValue /></SelectTrigger>
                 <SelectContent>
@@ -109,66 +97,48 @@ function MigrationPage() {
                 </SelectContent>
               </Select>
             </div>
-            <div className="grid grid-cols-2 gap-2">
-              <OptionRow checked={preserveSlug} onChange={setPreserveSlug} label="Conserver le slug" />
-              <OptionRow checked={preserveDate} onChange={setPreserveDate} label="Conserver la date" />
-              <OptionRow checked={preserveStatus} onChange={setPreserveStatus} label="Conserver le statut" />
-              <OptionRow checked={preserveExcerpt} onChange={setPreserveExcerpt} label="Conserver l'extrait" />
-              <OptionRow checked={migrateFeaturedImage} onChange={setMigrateFeaturedImage} label="Image principale" />
-              <OptionRow checked={migrateInlineImages} onChange={setMigrateInlineImages} label="Images du contenu" />
-            </div>
             <Button
               size="lg"
               className="w-full"
-              disabled={postIds.length === 0 || inProgress}
+              disabled={postIds.length === 0 || inProgress || !status.ready}
               onClick={() => mut.mutate()}
             >
-              <Rocket className="size-4 mr-2" />
-              {inProgress ? "Migration en cours…" : `Lancer via REST (${postIds.length})`}
+              <Cloud className="size-4 mr-2" />
+              {inProgress ? "Apify en cours…" : `Publier sur Site B via Apify (${postIds.length})`}
             </Button>
-            <ApifyButton postIds={postIds} duplicateStrategy={duplicateStrategy} />
           </CardContent>
         </Card>
 
-
         <Card>
           <CardHeader>
-            <CardTitle className="text-base">Progression</CardTitle>
+            <CardTitle className="text-base">Résultats</CardTitle>
           </CardHeader>
           <CardContent className="space-y-4">
             {inProgress && (
-              <>
-                <Progress value={undefined} />
-                <p className="text-sm text-muted-foreground">
-                  Migration synchrone en cours. Les opérations sont exécutées sur le serveur.
-                  La fenêtre ne doit pas être fermée.
-                </p>
-              </>
+              <p className="text-sm text-muted-foreground">
+                Publication en cours sur Apify. Chaque article est traité séparément sur le cloud.
+              </p>
             )}
             {result && (
               <div className="space-y-3">
-                <div className="flex gap-3">
+                <div className="flex gap-3 flex-wrap">
                   <Badge variant="outline" className="border-[var(--success)]/40">
                     <CheckCircle2 className="size-3 mr-1" style={{ color: "var(--success)" }} />
                     {result.succeeded} réussis
                   </Badge>
-                  {result.failed > 0 && (
+                  {result.total - result.succeeded > 0 && (
                     <Badge variant="outline" className="border-destructive/40">
                       <XCircle className="size-3 mr-1 text-destructive" />
-                      {result.failed} échecs
+                      {result.total - result.succeeded} échecs
                     </Badge>
                   )}
                   <Badge variant="outline">{result.total} total</Badge>
                 </div>
-                <ReportList report={result.report} />
-                <LogList log={result.log} />
-                <Link to="/journal" className="text-sm text-primary inline-flex items-center gap-1">
-                  <ScrollText className="size-3" /> Voir le journal complet
-                </Link>
+                <ResultsTable results={result.results} />
               </div>
             )}
             {!result && !inProgress && (
-              <p className="text-sm text-muted-foreground">Aucune migration lancée.</p>
+              <p className="text-sm text-muted-foreground">Aucune publication lancée.</p>
             )}
           </CardContent>
         </Card>
@@ -177,120 +147,43 @@ function MigrationPage() {
   );
 }
 
-function OptionRow({ checked, onChange, label }: { checked: boolean; onChange: (v: boolean) => void; label: string }) {
+function ResultsTable({ results }: { results: Array<{ sourceId: number; slug: string; ok: boolean; skipped: boolean; postUrl: string | null; postId: number | null; runId: string | null; error: string | null }> }) {
   return (
-    <label className="flex items-center gap-2 text-sm cursor-pointer">
-      <Checkbox checked={checked} onCheckedChange={(v) => onChange(Boolean(v))} />
-      {label}
-    </label>
-  );
-}
-
-function ApifyButton({
-  postIds,
-  duplicateStrategy,
-}: {
-  postIds: number[];
-  duplicateStrategy: "skip" | "overwrite" | "copy";
-}) {
-  const run = useServerFn(runSiteBApifyBatch);
-  const mut = useMutation({
-    mutationFn: () => run({ data: { postIds, duplicateStrategy } }),
-    onSuccess: (res) => toast.success(`Apify: ${res.succeeded}/${res.total} publiés`),
-    onError: (e) => toast.error(e instanceof Error ? e.message : "Erreur Apify"),
-  });
-  return (
-    <div className="space-y-2">
-      <Button
-        variant="outline"
-        size="lg"
-        className="w-full"
-        disabled={postIds.length === 0 || mut.isPending}
-        onClick={() => mut.mutate()}
-      >
-        <Cloud className="size-4 mr-2" />
-        {mut.isPending ? "Apify en cours…" : `Publier sur Site B via Apify (${postIds.length})`}
-      </Button>
-      {mut.data && (
-        <div className="rounded-md border border-border max-h-48 overflow-auto text-xs">
-          <table className="w-full">
-            <thead className="bg-muted/40 sticky top-0">
-              <tr>
-                <th className="text-left p-2">Slug</th>
-                <th className="text-left p-2">État</th>
-                <th className="text-left p-2">URL</th>
-                <th className="text-left p-2">Run</th>
-              </tr>
-            </thead>
-            <tbody>
-              {mut.data.results.map((r) => (
-                <tr key={r.sourceId} className="border-t border-border">
-                  <td className="p-2 font-mono">{r.slug}</td>
-                  <td className="p-2">
-                    {r.ok ? (
-                      <span style={{ color: "var(--success)" }}>{r.skipped ? "↷" : "✓"}</span>
-                    ) : (
-                      <span className="text-destructive" title={r.error ?? ""}>✗</span>
-                    )}
-                  </td>
-                  <td className="p-2 text-muted-foreground truncate max-w-[180px]">
-                    {r.postUrl ? (
-                      <a href={r.postUrl} target="_blank" rel="noreferrer" className="text-primary">
-                        {r.postUrl}
-                      </a>
-                    ) : (
-                      "—"
-                    )}
-                  </td>
-                  <td className="p-2 font-mono text-muted-foreground">{r.runId ?? "—"}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      )}
-    </div>
-  );
-}
-
-
-function ReportList({ report }: { report: MigrationReportItem[] }) {
-  return (
-    <div className="rounded-md border border-border max-h-72 overflow-auto">
-      <table className="w-full text-xs">
+    <div className="rounded-md border border-border max-h-72 overflow-auto text-xs">
+      <table className="w-full">
         <thead className="bg-muted/40 sticky top-0">
           <tr>
-            <th className="text-left p-2 font-medium">Slug</th>
-            <th className="text-left p-2 font-medium">État</th>
-            <th className="text-left p-2 font-medium">Étape</th>
-            <th className="text-left p-2 font-medium">HTTP</th>
-            <th className="text-left p-2 font-medium">Message</th>
+            <th className="text-left p-2">Slug</th>
+            <th className="text-left p-2">État</th>
+            <th className="text-left p-2">URL</th>
+            <th className="text-left p-2">Run</th>
           </tr>
         </thead>
         <tbody>
-          {report.map((r) => (
+          {results.map((r) => (
             <tr key={r.sourceId} className="border-t border-border">
               <td className="p-2 font-mono">{r.slug}</td>
-              <td className="p-2">{r.ok ? <span style={{ color: "var(--success)" }}>✓</span> : <span className="text-destructive">✗</span>}</td>
-              <td className="p-2">{r.step}</td>
-              <td className="p-2">{r.httpStatus ?? "—"}</td>
-              <td className="p-2 text-muted-foreground">{r.message ?? "—"}</td>
+              <td className="p-2">
+                {r.ok ? (
+                  <span style={{ color: "var(--success)" }}>{r.skipped ? "↷" : "✓"}</span>
+                ) : (
+                  <span className="text-destructive" title={r.error ?? ""}>✗</span>
+                )}
+              </td>
+              <td className="p-2 text-muted-foreground truncate max-w-[180px]">
+                {r.postUrl ? (
+                  <a href={r.postUrl} target="_blank" rel="noreferrer" className="text-primary">
+                    {r.postUrl}
+                  </a>
+                ) : (
+                  "—"
+                )}
+              </td>
+              <td className="p-2 font-mono text-muted-foreground">{r.runId ?? "—"}</td>
             </tr>
           ))}
         </tbody>
       </table>
-    </div>
-  );
-}
-
-function LogList({ log }: { log: LogEntry[] }) {
-  return (
-    <div className="rounded-md border border-border bg-muted/30 max-h-48 overflow-auto p-2 font-mono text-[11px] leading-5">
-      {log.slice(-100).map((l, i) => (
-        <div key={i} className={l.level === "error" ? "text-destructive" : l.level === "warn" ? "text-[var(--warning)]" : ""}>
-          [{new Date(l.ts).toLocaleTimeString("fr-FR")}] {l.message}
-        </div>
-      ))}
     </div>
   );
 }
