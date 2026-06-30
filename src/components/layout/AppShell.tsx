@@ -3,7 +3,7 @@ import { useEffect, type ReactNode } from "react";
 import {
   LayoutDashboard,
   PlugZap,
-  GitCompareArrows,
+  FileText,
   Cloud,
   ScrollText,
   LogOut,
@@ -17,9 +17,9 @@ import { Toaster } from "@/components/ui/sonner";
 const nav = [
   { to: "/dashboard", label: "Dashboard", icon: LayoutDashboard },
   { to: "/connections", label: "Connexions", icon: PlugZap },
-  { to: "/comparison", label: "Articles & comparaison", icon: GitCompareArrows },
-  { to: "/migration", label: "Publication Site B", icon: Cloud },
-  { to: "/journal", label: "Journal", icon: ScrollText },
+  { to: "/comparison", label: "Articles Site A", icon: FileText },
+  { to: "/migration", label: "Journal Site B", icon: Cloud },
+  { to: "/journal", label: "Migrations (legacy)", icon: ScrollText },
 ] as const;
 
 export function AppShell({ children }: { children: ReactNode }) {
