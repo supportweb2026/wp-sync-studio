@@ -1,5 +1,5 @@
 import { Actor } from "apify";
-import { chromium } from "playwright";
+import { chromium, type Page } from "playwright";
 import type {
   ActorInput,
   ActorOutput,
@@ -91,7 +91,7 @@ try {
 await Actor.pushData(output);
 await Actor.exit();
 
-async function resolveActualitesPostType(page: typeof import("playwright").Page, requested: string): Promise<string> {
+async function resolveActualitesPostType(page: Page, requested: string): Promise<string> {
   const links = await page.locator("#adminmenu a[href*='post_type='], a[href*='post-new.php']").evaluateAll((anchors) =>
     anchors.map((a) => ({
       text: (a.textContent ?? "").trim().toLowerCase(),
