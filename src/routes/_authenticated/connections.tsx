@@ -148,7 +148,7 @@ function DestinationForm({ current }: { current?: PublicConnection }) {
   const [siteUrl, setSiteUrl] = useState(current?.siteUrl ?? "");
   const [username, setUsername] = useState(current?.username ?? "");
   const [appPassword, setAppPassword] = useState("");
-  const [loginPath, setLoginPath] = useState(current?.loginPath ?? "/wp-admin");
+  const [loginPath, setLoginPath] = useState(current?.loginPath ?? "");
 
   const saveMut = useMutation({
     mutationFn: () =>
