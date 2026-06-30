@@ -30,7 +30,7 @@ import {
 } from "@/components/ui/select";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Skeleton } from "@/components/ui/skeleton";
-import { Cloud, ExternalLink, Image as ImageIcon, Info, RefreshCw, Search } from "lucide-react";
+import { Cloud, ExternalLink, Image as ImageIcon, Info, Loader2, RefreshCw, Search } from "lucide-react";
 import { toast } from "sonner";
 
 export const Route = createFileRoute("/_authenticated/comparison")({
