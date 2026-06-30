@@ -182,31 +182,53 @@ async function fillAcfDate(page: Page, isoDate: string): Promise<void> {
   const dd = String(d.getDate()).padStart(2, "0");
   const mm = String(d.getMonth() + 1).padStart(2, "0");
   const yyyy = String(d.getFullYear());
+  const display = `${dd}/${mm}/${yyyy}`;
+  const hidden = `${yyyy}${mm}${dd}`;
 
-  // ACF datepicker : label "Date" → input texte dans .acf-field
-  const field = page.locator(".acf-field-date-picker, .acf-field").filter({ hasText: /^date$/i }).first();
-  if ((await field.count()) === 0) {
-    // Fallback: champ par label dans la métabox "Champs Actualités"
+  const candidates = [
+    page.locator(".acf-field-date-picker").first(),
+    page.locator(".acf-field[data-name*='date' i]").first(),
+    page.locator(".acf-field").filter({ hasText: /^date$/i }).first(),
+  ];
+  let field = null as null | (typeof candidates)[number];
+  for (const c of candidates) {
+    if ((await c.count()) > 0) { field = c; break; }
+  }
+  if (!field) {
     const generic = page.getByLabel(/^date$/i).first();
     if ((await generic.count()) > 0) {
-      await generic.fill(`${dd}/${mm}/${yyyy}`).catch(() => null);
-      await page.keyboard.press("Escape").catch(() => null);
+      await generic.evaluate((el, v) => {
+        const i = el as HTMLInputElement;
+        i.value = v as string;
+        i.dispatchEvent(new Event("input", { bubbles: true }));
+        i.dispatchEvent(new Event("change", { bubbles: true }));
+      }, display).catch(() => null);
+      console.log(`[actor] Date écrite via label générique: ${display}`);
+    } else {
+      console.warn("[actor] Champ Date ACF introuvable");
     }
     return;
   }
-  const input = field.locator("input.input, input[type='text']").first();
-  if ((await input.count()) === 0) return;
-  // ACF: alt-input visible + hidden input avec format AAAAMMJJ
-  await input.click().catch(() => null);
-  await input.fill(`${dd}/${mm}/${yyyy}`).catch(() => null);
-  await page.keyboard.press("Escape").catch(() => null);
-  // Force la valeur hidden si présente
+
+  const visible = field.locator("input.input, input[type='text']").first();
+  if ((await visible.count()) > 0) {
+    await visible.evaluate((el, v) => {
+      const i = el as HTMLInputElement;
+      i.value = v as string;
+      i.dispatchEvent(new Event("input", { bubbles: true }));
+      i.dispatchEvent(new Event("change", { bubbles: true }));
+    }, display).catch(() => null);
+  }
   await field.locator("input.input-alt, input[type='hidden']").first().evaluate((el, val) => {
-    (el as HTMLInputElement).value = val as string;
-  }, `${yyyy}${mm}${dd}`).catch(() => null);
+    const i = el as HTMLInputElement;
+    i.value = val as string;
+    i.dispatchEvent(new Event("change", { bubbles: true }));
+  }, hidden).catch(() => null);
+  console.log(`[actor] Date ACF écrite: visible=${display} hidden=${hidden}`);
 }
 
-async function checkTagBoxes(page: Page, tags: string[]): Promise<void> {
+async function checkTagBoxes(page: Page, tags: string[]): Promise<string[]> {
+  const ignored: string[] = [];
   for (const tag of tags) {
     const label = page
       .locator(".categorydiv label, .inside label, .tagsdiv label")
@@ -214,16 +236,15 @@ async function checkTagBoxes(page: Page, tags: string[]): Promise<void> {
       .first();
     if ((await label.count()) > 0) {
       await label.locator("input[type='checkbox']").check({ force: true }).catch(() => null);
+      console.log(`[actor] Étiquette cochée: ${tag}`);
       continue;
     }
-    // Fallback champ texte type tagadd
-    const newtag = page.locator(".tagsdiv .newtag").first();
-    if ((await newtag.count()) > 0) {
-      await newtag.fill(tag).catch(() => null);
-      await page.locator(".tagsdiv input.tagadd").first().click().catch(() => null);
-    }
+    ignored.push(tag);
+    console.warn(`[actor] Étiquette introuvable côté Site B, ignorée: ${tag}`);
   }
+  return ignored;
 }
+
 
 async function publishOrUpdate(page: Page, isUpdate: boolean): Promise<void> {
   const button = page.locator("#publish").first();
