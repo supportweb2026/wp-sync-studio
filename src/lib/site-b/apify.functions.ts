@@ -162,7 +162,7 @@ export const publishToSiteB = createServerFn({ method: "POST" })
       username,
       password,
       loginPath,
-      cptSlug: process.env.SITE_B_CPT_SLUG ?? "actualite",
+      cptSlug: process.env.SITE_B_CPT_SLUG ?? "actualites",
       duplicateStrategy: data.duplicateStrategy,
       article: {
         title: data.title,
