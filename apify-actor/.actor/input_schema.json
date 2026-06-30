@@ -7,7 +7,7 @@
       "title": "Mode",
       "type": "string",
       "editor": "select",
-      "enum": ["publish", "login-check", "list-posts"],
+      "enum": ["publish", "login-check"],
       "default": "publish"
     },
     "siteUrl": { "title": "Site URL", "type": "string", "editor": "textfield" },

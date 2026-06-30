@@ -62,7 +62,6 @@ async function loadAuthForRole(
   const { decryptSecret } = await import(
     "@/services/wordpress/crypto.server"
   );
-  // loginPath éventuellement stocké dans last_capabilities.loginPath
   const caps = row.last_capabilities as { loginPath?: string } | null;
   return {
     siteUrl: row.site_url,
@@ -163,7 +162,6 @@ export const saveConnection = createServerFn({ method: "POST" })
         appPassword,
       });
     } else {
-      // destination → Apify login-check
       const { runApifyLoginCheck } = await import(
         "@/lib/site-b/apify-internal.server"
       );
@@ -249,126 +247,66 @@ export const testConnectionRole = createServerFn({ method: "POST" })
     return caps;
   });
 
-export const fetchComparison = createServerFn({ method: "GET" })
+export interface SourceArticleRow {
+  id: number;
+  slug: string;
+  title: string;
+  date: string;
+  status: string;
+  link: string;
+  featuredMediaId: number;
+  featuredImageUrl: string | null;
+}
+
+export const listSourcePosts = createServerFn({ method: "GET" })
   .middleware([requireSupabaseAuth])
   .handler(async ({ context }) => {
-    const [src, dst] = await Promise.all([
-      loadAuthForRole(context.supabase, context.userId, "source"),
-      loadAuthForRole(context.supabase, context.userId, "destination"),
-    ]);
+    const src = await loadAuthForRole(context.supabase, context.userId, "source");
     if (!src) {
       return {
         notConfigured: true as const,
-        missingSource: true,
-        missingDestination: !dst,
-        rows: [],
-        sourceTotal: 0,
-        destinationTotal: 0,
-        destinationSource: "none" as const,
-        users: [],
-        categories: [],
-        tags: [],
+        posts: [] as SourceArticleRow[],
+        total: 0,
       };
     }
+    const { listAllPosts } = await import("@/services/wordpress/posts.server");
+    const { getMedia } = await import("@/services/wordpress/media.server");
+    const posts: WpPost[] = await listAllPosts({
+      siteUrl: src.siteUrl,
+      username: src.username,
+      appPassword: src.appPassword,
+    });
 
-
-    const { listAllPosts } = await import(
-      "@/services/wordpress/posts.server"
+    // Résolution image à la une (en parallèle, sans bloquer la liste)
+    const mediaIds = Array.from(
+      new Set(posts.map((p) => p.featured_media).filter((id) => id > 0)),
     );
-    const { listAllUsers } = await import(
-      "@/services/wordpress/users.server"
-    );
-    const { listAllTerms } = await import(
-      "@/services/wordpress/terms.server"
-    );
-    const { buildComparison } = await import(
-      "@/services/comparison/matcher"
-    );
-    const { runApifyListPosts } = await import(
-      "@/lib/site-b/apify-internal.server"
-    );
-
-    const destPromise = dst
-      ? runApifyListPosts({
-          siteUrl: dst.siteUrl,
-          username: dst.username,
-          password: dst.appPassword,
-          loginPath: dst.loginPath ?? "/wp-admin",
-        }).catch((e: unknown) => ({
-          ok: false as const,
-          posts: [] as WpPost[],
-          error: e instanceof Error ? e.message : String(e),
-        }))
-      : Promise.resolve({
-          ok: false as const,
-          posts: [] as WpPost[],
-          error: "Destination non configurée",
-        });
-
-
-    const [sourcePosts, sourceUsers, sourceCats, sourceTags, destResult] =
-      await Promise.all([
-        listAllPosts(src),
-        listAllUsers(src).catch(() => []),
-        listAllTerms(src, "categories").catch(() => []),
-        listAllTerms(src, "tags").catch(() => []),
-        destPromise,
-      ]);
-
-    let destinationPosts: WpPost[] = [];
-    let destinationSource: "apify" | "cache" | "none" = "none";
-    let destinationError: string | null = null;
-
-    if (destResult.ok && destResult.posts.length > 0) {
-      destinationPosts = destResult.posts;
-      destinationSource = "apify";
-    } else {
-      // Fallback : utilise les publications déjà enregistrées dans cette app
-      destinationError = destResult.ok ? null : destResult.error;
-      const { data: pubs } = await context.supabase
-        .from("site_b_publications")
-        .select("source_slug,post_id,post_url,created_at,status")
-        .eq("user_id", context.userId)
-        .eq("status", "succeeded");
-      const rows = (pubs ?? []) as Array<{
-        source_slug: string | null;
-        post_id: number | null;
-        post_url: string | null;
-        created_at: string;
-      }>;
-      destinationPosts = rows
-        .filter((r) => r.source_slug)
-        .map(
-          (r): WpPost => ({
-            id: r.post_id ?? 0,
-            slug: r.source_slug as string,
-            title: { rendered: r.source_slug as string },
-            content: { rendered: "" },
-            excerpt: { rendered: "" },
-            date: r.created_at,
-            modified: r.created_at,
-            status: "publish",
-            author: 0,
-            categories: [],
-            tags: [],
-            featured_media: 0,
-            link: r.post_url ?? "",
-          }),
+    const mediaMap = new Map<number, string>();
+    await Promise.all(
+      mediaIds.map(async (id) => {
+        const m = await getMedia(
+          { siteUrl: src.siteUrl, username: src.username, appPassword: src.appPassword },
+          id,
         );
-      destinationSource = destinationPosts.length > 0 ? "cache" : "none";
-    }
+        if (m?.source_url) mediaMap.set(id, m.source_url);
+      }),
+    );
 
-    const rows = await buildComparison(sourcePosts, destinationPosts);
+    const rows: SourceArticleRow[] = posts.map((p) => ({
+      id: p.id,
+      slug: p.slug,
+      title: p.title.rendered,
+      date: p.date,
+      status: p.status,
+      link: p.link,
+      featuredMediaId: p.featured_media,
+      featuredImageUrl: p.featured_media ? (mediaMap.get(p.featured_media) ?? null) : null,
+    }));
+
     return {
       notConfigured: false as const,
-      rows,
-      sourceTotal: sourcePosts.length,
-      destinationTotal: destinationPosts.length,
-      destinationSource,
-      destinationError,
-      users: sourceUsers,
-      categories: sourceCats,
-      tags: sourceTags,
+      posts: rows,
+      total: rows.length,
     };
   });
 

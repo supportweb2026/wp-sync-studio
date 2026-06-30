@@ -8,7 +8,7 @@ export interface ActorArticle {
   featuredImageUrl?: string;
 }
 
-export type ActorMode = "publish" | "login-check" | "list-posts";
+export type ActorMode = "publish" | "login-check";
 
 export interface ActorInput {
   mode?: ActorMode;
@@ -36,19 +36,4 @@ export interface ActorLoginCheckOutput {
   error?: string;
 }
 
-export interface ListedPost {
-  slug: string;
-  title: string;
-  date?: string;
-  status?: string;
-  postId?: number;
-  link?: string;
-}
-
-export interface ActorListPostsOutput {
-  ok: boolean;
-  posts: ListedPost[];
-  error?: string;
-}
-
-export type ActorOutput = ActorPublishOutput | ActorLoginCheckOutput | ActorListPostsOutput;
+export type ActorOutput = ActorPublishOutput | ActorLoginCheckOutput;

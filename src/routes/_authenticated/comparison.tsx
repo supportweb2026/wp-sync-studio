@@ -1,7 +1,7 @@
-import { createFileRoute, useNavigate } from "@tanstack/react-router";
+import { createFileRoute } from "@tanstack/react-router";
 import { useMemo, useState } from "react";
 import { useServerFn } from "@tanstack/react-start";
-import { useQuery } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   ColumnDef,
   flexRender,
@@ -13,7 +13,9 @@ import {
   type SortingState,
   type RowSelectionState,
 } from "@tanstack/react-table";
-import { fetchComparison } from "@/lib/wordpress/wp.functions";
+import { listSourcePosts, type SourceArticleRow } from "@/lib/wordpress/wp.functions";
+import { runSiteBApifyBatch } from "@/lib/site-b/apify-batch.functions";
+import { getApifyActorStatus } from "@/lib/site-b/apify.functions";
 import { Card, CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
@@ -26,57 +28,63 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Skeleton } from "@/components/ui/skeleton";
-import { ArticlePreviewDialog } from "@/components/dialogs/ArticlePreviewDialog";
-import { Eye, Rocket, RefreshCw, Search } from "lucide-react";
-import type { WpPost } from "@/schemas/wordpress";
-import type { ComparisonRow, ComparisonState } from "@/services/comparison/matcher";
+import { Cloud, ExternalLink, Image as ImageIcon, Info, RefreshCw, Search } from "lucide-react";
+import { toast } from "sonner";
 
 export const Route = createFileRoute("/_authenticated/comparison")({
-  head: () => ({ meta: [{ title: "Comparaison — WP Sync Manager" }] }),
-  component: ComparisonPage,
+  head: () => ({ meta: [{ title: "Articles Site A — WP Sync Manager" }] }),
+  component: ArticlesPage,
   errorComponent: ({ error }) => <div className="text-destructive">{error.message}</div>,
   notFoundComponent: () => <div>Introuvable</div>,
 });
 
-const stateLabel: Record<ComparisonState, { label: string; color: string }> = {
-  identical: { label: "Identique", color: "var(--success)" },
-  different: { label: "Différent", color: "var(--warning)" },
-  only_on_source: { label: "Absent de B", color: "var(--info)" },
-  only_on_destination: { label: "Absent de A", color: "var(--muted-foreground)" },
-};
+function ArticlesPage() {
+  const listFn = useServerFn(listSourcePosts);
+  const statusFn = useServerFn(getApifyActorStatus);
+  const runBatch = useServerFn(runSiteBApifyBatch);
+  const qc = useQueryClient();
 
-function ComparisonPage() {
-  const fetchFn = useServerFn(fetchComparison);
-  const cmp = useQuery({
-    queryKey: ["comparison"],
-    queryFn: () => fetchFn(),
+  const articles = useQuery({
+    queryKey: ["source-posts"],
+    queryFn: () => listFn(),
     staleTime: 5 * 60_000,
+  });
+  const status = useQuery({
+    queryKey: ["apify-actor-status"],
+    queryFn: () => statusFn(),
   });
 
   const [search, setSearch] = useState("");
-  const [stateFilter, setStateFilter] = useState<string>("all");
-  const [sorting, setSorting] = useState<SortingState>([]);
+  const [sorting, setSorting] = useState<SortingState>([
+    { id: "date", desc: true },
+  ]);
   const [selection, setSelection] = useState<RowSelectionState>({});
-  const [previewRow, setPreviewRow] = useState<ComparisonRow | null>(null);
-  const navigate = useNavigate();
+  const [duplicateStrategy, setDuplicateStrategy] = useState<"skip" | "overwrite" | "copy">("skip");
 
-  const rows = cmp.data?.rows ?? [];
+  const rows: SourceArticleRow[] = articles.data && "posts" in articles.data ? articles.data.posts : [];
+  const notConfigured = articles.data && "notConfigured" in articles.data && articles.data.notConfigured;
+
   const filteredRows = useMemo(() => {
-    let r = rows;
-    if (stateFilter !== "all") r = r.filter((x) => x.state === stateFilter);
-    if (search.trim()) {
-      const q = search.toLowerCase();
-      r = r.filter((x) => {
-        const t = (x.source?.title.rendered ?? x.destination?.title.rendered ?? "").toLowerCase();
-        const s = (x.source?.slug ?? x.destination?.slug ?? "").toLowerCase();
-        return t.includes(q) || s.includes(q);
-      });
-    }
-    return r;
-  }, [rows, stateFilter, search]);
+    if (!search.trim()) return rows;
+    const q = search.toLowerCase();
+    return rows.filter(
+      (r) => r.title.toLowerCase().includes(q) || r.slug.toLowerCase().includes(q),
+    );
+  }, [rows, search]);
 
-  const columns = useMemo<ColumnDef<ComparisonRow>[]>(() => [
+  const mut = useMutation({
+    mutationFn: (postIds: number[]) =>
+      runBatch({ data: { postIds, duplicateStrategy } }),
+    onSuccess: (res) => {
+      toast.success(`Site B : ${res.succeeded}/${res.total} publié(s)`);
+      qc.invalidateQueries({ queryKey: ["site-b-publications"] });
+    },
+    onError: (e) => toast.error(e instanceof Error ? e.message : "Erreur de publication"),
+  });
+
+  const columns = useMemo<ColumnDef<SourceArticleRow>[]>(() => [
     {
       id: "select",
       header: ({ table }) => (
@@ -89,7 +97,6 @@ function ComparisonPage() {
       cell: ({ row }) => (
         <Checkbox
           checked={row.getIsSelected()}
-          disabled={!row.original.source}
           onCheckedChange={(v) => row.toggleSelected(Boolean(v))}
           aria-label="Sélectionner"
         />
@@ -98,21 +105,34 @@ function ComparisonPage() {
       size: 36,
     },
     {
-      accessorFn: (r) => r.source?.title.rendered ?? r.destination?.title.rendered ?? "",
-      id: "title",
+      id: "image",
+      header: "",
+      cell: ({ row }) => row.original.featuredImageUrl ? (
+        <img
+          src={row.original.featuredImageUrl}
+          alt=""
+          className="size-10 rounded object-cover border border-border"
+          loading="lazy"
+        />
+      ) : (
+        <div className="size-10 rounded border border-dashed border-border grid place-items-center text-muted-foreground">
+          <ImageIcon className="size-4" />
+        </div>
+      ),
+      enableSorting: false,
+    },
+    {
+      accessorKey: "title",
       header: "Titre",
-      cell: ({ row, getValue }) => (
-        <div>
-          <div className="font-medium text-sm">{getValue() as string}</div>
-          <div className="font-mono text-[11px] text-muted-foreground">
-            {row.original.source?.slug ?? row.original.destination?.slug}
-          </div>
+      cell: ({ row }) => (
+        <div className="max-w-md">
+          <div className="font-medium text-sm" dangerouslySetInnerHTML={{ __html: row.original.title }} />
+          <div className="font-mono text-[11px] text-muted-foreground">{row.original.slug}</div>
         </div>
       ),
     },
     {
-      accessorFn: (r) => r.source?.date ?? r.destination?.date ?? "",
-      id: "date",
+      accessorKey: "date",
       header: "Date",
       cell: ({ getValue }) => {
         const v = getValue() as string;
@@ -120,48 +140,38 @@ function ComparisonPage() {
       },
     },
     {
-      id: "status",
+      accessorKey: "status",
       header: "Statut",
-      cell: ({ row }) => {
-        const s = row.original.source?.status ?? row.original.destination?.status ?? "—";
-        return <Badge variant="outline" className="text-[10px]">{s}</Badge>;
-      },
-    },
-    {
-      id: "presence",
-      header: "A / B",
-      cell: ({ row }) => (
-        <div className="flex gap-1.5">
-          <Dot ok={Boolean(row.original.source)} />
-          <Dot ok={Boolean(row.original.destination)} />
-        </div>
-      ),
-    },
-    {
-      id: "state",
-      header: "État",
-      cell: ({ row }) => {
-        const info = stateLabel[row.original.state];
-        return (
-          <Badge variant="outline" style={{ borderColor: info.color, color: info.color }}>
-            {info.label}
-            {row.original.diffFields.length > 0 && (
-              <span className="ml-1 text-[10px] opacity-80">({row.original.diffFields.join(", ")})</span>
-            )}
-          </Badge>
-        );
-      },
+      cell: ({ getValue }) => <Badge variant="outline" className="text-[10px]">{getValue() as string}</Badge>,
     },
     {
       id: "actions",
       header: "",
       cell: ({ row }) => (
-        <Button size="sm" variant="ghost" onClick={() => setPreviewRow(row.original)}>
-          <Eye className="size-4" />
-        </Button>
+        <div className="flex items-center gap-1.5 justify-end">
+          <a
+            href={row.original.link}
+            target="_blank"
+            rel="noreferrer"
+            className="text-muted-foreground hover:text-foreground"
+            title="Voir sur Site A"
+          >
+            <ExternalLink className="size-4" />
+          </a>
+          <Button
+            size="sm"
+            variant="outline"
+            disabled={!status.data?.ready || mut.isPending}
+            onClick={() => mut.mutate([row.original.id])}
+          >
+            <Cloud className="size-3.5 mr-1" />
+            Publier sur B
+          </Button>
+        </div>
       ),
+      enableSorting: false,
     },
-  ], []);
+  ], [mut, status.data]);
 
   const table = useReactTable({
     data: filteredRows,
@@ -169,55 +179,56 @@ function ComparisonPage() {
     state: { sorting, rowSelection: selection },
     onSortingChange: setSorting,
     onRowSelectionChange: setSelection,
-    getRowId: (r) => r.key,
+    getRowId: (r) => String(r.id),
     getCoreRowModel: getCoreRowModel(),
     getSortedRowModel: getSortedRowModel(),
     getFilteredRowModel: getFilteredRowModel(),
     getPaginationRowModel: getPaginationRowModel(),
     initialState: { pagination: { pageSize: 25 } },
-    enableRowSelection: (r) => Boolean(r.original.source),
   });
 
-  function migrateSelected() {
-    const ids = Object.keys(selection)
-      .map((k) => filteredRows.find((r) => r.key === k))
-      .filter((r): r is ComparisonRow => Boolean(r?.source))
-      .map((r) => (r.source as WpPost).id);
-    if (ids.length === 0) return;
-    sessionStorage.setItem("migration:postIds", JSON.stringify(ids));
-    navigate({ to: "/migration" });
-  }
+  const selectedIds = Object.keys(selection).map(Number).filter((n) => !Number.isNaN(n));
 
-  const destSource = cmp.data && "destinationSource" in cmp.data ? cmp.data.destinationSource : "none";
-  const destError = cmp.data && "destinationError" in cmp.data ? cmp.data.destinationError : null;
+  function publishSelection() {
+    if (selectedIds.length === 0) return;
+    mut.mutate(selectedIds);
+  }
+  function publishAll() {
+    if (filteredRows.length === 0) return;
+    mut.mutate(filteredRows.map((r) => r.id));
+  }
 
   return (
     <div className="space-y-6">
       <header className="flex items-start justify-between gap-4 flex-wrap">
         <div>
-          <h1 className="text-2xl font-semibold tracking-tight">Comparaison</h1>
+          <h1 className="text-2xl font-semibold tracking-tight">Articles Site A</h1>
           <p className="text-sm text-muted-foreground mt-1">
-            {cmp.data ? `${cmp.data.sourceTotal} articles côté A · ${cmp.data.destinationTotal} côté B` : "Chargement…"}
-            {destSource === "cache" && (
-              <span className="ml-2 text-amber-600">(Site B lu depuis le cache local : Apify indisponible{destError ? ` — ${destError}` : ""})</span>
-            )}
-            {destSource === "none" && cmp.data && !("notConfigured" in cmp.data && cmp.data.notConfigured) && (
-              <span className="ml-2 text-amber-600">(aucune donnée Site B disponible{destError ? ` — ${destError}` : ""})</span>
-            )}
+            {articles.data && "total" in articles.data
+              ? `${articles.data.total} article(s) lus depuis Site A via REST.`
+              : "Chargement…"}
           </p>
         </div>
-        <div className="flex gap-2">
-          <Button variant="outline" onClick={() => cmp.refetch()} disabled={cmp.isFetching}>
-            <RefreshCw className={`size-4 mr-1.5 ${cmp.isFetching ? "animate-spin" : ""}`} />
-            Recharger
-          </Button>
-          <Button onClick={migrateSelected} disabled={Object.keys(selection).length === 0}>
-            <Rocket className="size-4 mr-1.5" />
-            Migrer ({Object.keys(selection).length})
-          </Button>
-        </div>
+        <Button variant="outline" onClick={() => articles.refetch()} disabled={articles.isFetching}>
+          <RefreshCw className={`size-4 mr-1.5 ${articles.isFetching ? "animate-spin" : ""}`} />
+          Recharger
+        </Button>
       </header>
 
+      <Alert>
+        <Info className="size-4" />
+        <AlertDescription>
+          Cochez les articles puis cliquez « Publier la sélection sur Site B ».
+          Chaque article est envoyé via Apify : connexion admin WordPress, création de l'article, upload de l'image à la une.
+          L'auteur n'est pas modifié côté Site B.
+        </AlertDescription>
+      </Alert>
+
+      {!status.data?.ready && (
+        <Alert variant="destructive">
+          <AlertDescription>{status.data?.message ?? "Vérification de la configuration Apify…"}</AlertDescription>
+        </Alert>
+      )}
 
       <Card>
         <CardContent className="p-0">
@@ -231,32 +242,47 @@ function ComparisonPage() {
                 onChange={(e) => setSearch(e.target.value)}
               />
             </div>
-            <Select value={stateFilter} onValueChange={setStateFilter}>
-              <SelectTrigger className="w-[180px]"><SelectValue /></SelectTrigger>
-              <SelectContent>
-                <SelectItem value="all">Tous les états</SelectItem>
-                <SelectItem value="identical">Identique</SelectItem>
-                <SelectItem value="different">Différent</SelectItem>
-                <SelectItem value="only_on_source">Absent de B</SelectItem>
-                <SelectItem value="only_on_destination">Absent de A</SelectItem>
-              </SelectContent>
-            </Select>
+            <div className="flex items-center gap-2 ml-auto">
+              <Select value={duplicateStrategy} onValueChange={(v) => setDuplicateStrategy(v as "skip" | "overwrite" | "copy")}>
+                <SelectTrigger className="w-[200px]">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="skip">Si doublon : ignorer</SelectItem>
+                  <SelectItem value="overwrite">Si doublon : écraser</SelectItem>
+                  <SelectItem value="copy">Si doublon : créer copie</SelectItem>
+                </SelectContent>
+              </Select>
+              <Button
+                onClick={publishSelection}
+                disabled={selectedIds.length === 0 || !status.data?.ready || mut.isPending}
+              >
+                <Cloud className="size-4 mr-1.5" />
+                Publier la sélection ({selectedIds.length})
+              </Button>
+              <Button
+                variant="outline"
+                onClick={publishAll}
+                disabled={filteredRows.length === 0 || !status.data?.ready || mut.isPending}
+                title="Publie tous les articles filtrés"
+              >
+                Tout publier
+              </Button>
+            </div>
           </div>
 
-          {cmp.isLoading ? (
+          {articles.isLoading ? (
             <div className="p-4 space-y-2">
-              {Array.from({ length: 6 }).map((_, i) => <Skeleton key={i} className="h-10 w-full" />)}
+              {Array.from({ length: 6 }).map((_, i) => <Skeleton key={i} className="h-12 w-full" />)}
             </div>
-          ) : cmp.error ? (
-            <div className="p-6 text-sm text-destructive">{(cmp.error as Error).message}</div>
-          ) : cmp.data && "notConfigured" in cmp.data && cmp.data.notConfigured ? (
+          ) : articles.error ? (
+            <div className="p-6 text-sm text-destructive">{(articles.error as Error).message}</div>
+          ) : notConfigured ? (
             <div className="p-6 text-sm text-muted-foreground">
-              Configurez le Site A (source) dans{" "}
-              <a href="/connections" className="underline text-foreground">Connexions</a> pour afficher la liste des articles.
+              Configurez Site A (source) dans{" "}
+              <a href="/connections" className="underline text-foreground">Connexions</a>.
             </div>
-
           ) : (
-
             <div className="overflow-x-auto">
               <table className="w-full text-sm">
                 <thead className="bg-muted/40 border-b border-border">
@@ -294,8 +320,7 @@ function ComparisonPage() {
 
           <div className="p-3 border-t border-border flex items-center justify-between text-xs text-muted-foreground">
             <div>
-              {table.getFilteredRowModel().rows.length} résultats ·{" "}
-              {Object.keys(selection).length} sélectionné(s)
+              {table.getFilteredRowModel().rows.length} résultats · {selectedIds.length} sélectionné(s)
             </div>
             <div className="flex items-center gap-2">
               <Button size="sm" variant="ghost" onClick={() => table.previousPage()} disabled={!table.getCanPreviousPage()}>
@@ -311,17 +336,6 @@ function ComparisonPage() {
           </div>
         </CardContent>
       </Card>
-
-      <ArticlePreviewDialog row={previewRow} onClose={() => setPreviewRow(null)} />
     </div>
-  );
-}
-
-function Dot({ ok }: { ok: boolean }) {
-  return (
-    <span
-      className="inline-block size-2.5 rounded-full"
-      style={{ backgroundColor: ok ? "var(--success)" : "oklch(0.85 0.01 260)" }}
-    />
   );
 }

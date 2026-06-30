@@ -1,4 +1,4 @@
-import type { ApifyCapabilities, WpPost } from "@/schemas/wordpress";
+import type { ApifyCapabilities } from "@/schemas/wordpress";
 
 interface DestAuth {
   siteUrl: string;
@@ -8,7 +8,7 @@ interface DestAuth {
 }
 
 interface ApifyRunOptions {
-  mode: "publish" | "login-check" | "list-posts";
+  mode: "publish" | "login-check";
   timeoutSec?: number;
 }
 
@@ -73,67 +73,6 @@ export async function runApifyLoginCheck(
       loginPath: auth.loginPath,
       runId: null,
       errors: [e instanceof Error ? e.message : String(e)],
-    };
-  }
-}
-
-interface ListItem {
-  slug?: string;
-  title?: string;
-  date?: string;
-  status?: string;
-  postId?: number;
-  link?: string;
-}
-
-export async function runApifyListPosts(
-  auth: DestAuth,
-): Promise<{ ok: true; posts: WpPost[] } | { ok: false; posts: WpPost[]; error: string }> {
-  try {
-    const { items } = await callApifySync<
-      | { posts?: ListItem[] }
-      | ListItem
-    >(
-      {
-        siteUrl: auth.siteUrl,
-        username: auth.username,
-        password: auth.password,
-        loginPath: auth.loginPath,
-      },
-      { mode: "list-posts", timeoutSec: 240 },
-    );
-    // Le mode list-posts peut renvoyer soit [{posts:[...]}], soit la liste à plat.
-    const flat: ListItem[] = [];
-    for (const entry of items) {
-      if (entry && typeof entry === "object" && "posts" in entry && Array.isArray(entry.posts)) {
-        flat.push(...(entry.posts as ListItem[]));
-      } else if (entry && typeof entry === "object" && "slug" in entry) {
-        flat.push(entry as ListItem);
-      }
-    }
-    const posts: WpPost[] = flat
-      .filter((p) => p.slug)
-      .map((p, i) => ({
-        id: p.postId ?? -(i + 1),
-        slug: p.slug as string,
-        title: { rendered: p.title ?? (p.slug as string) },
-        content: { rendered: "" },
-        excerpt: { rendered: "" },
-        date: p.date ?? new Date().toISOString(),
-        modified: p.date,
-        status: p.status ?? "publish",
-        author: 0,
-        categories: [],
-        tags: [],
-        featured_media: 0,
-        link: p.link ?? "",
-      }));
-    return { ok: true, posts };
-  } catch (e) {
-    return {
-      ok: false,
-      posts: [],
-      error: e instanceof Error ? e.message : String(e),
     };
   }
 }

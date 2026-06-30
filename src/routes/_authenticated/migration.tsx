@@ -1,239 +1,126 @@
 import { createFileRoute, Link } from "@tanstack/react-router";
-import { useEffect, useState } from "react";
 import { useServerFn } from "@tanstack/react-start";
-import { useMutation, useSuspenseQuery } from "@tanstack/react-query";
-import { queryOptions } from "@tanstack/react-query";
-import { runSiteBApifyBatch } from "@/lib/site-b/apify-batch.functions";
-import { getApifyActorStatus } from "@/lib/site-b/apify.functions";
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
-import { Button } from "@/components/ui/button";
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { Label } from "@/components/ui/label";
-import { Badge } from "@/components/ui/badge";
+import { useQuery } from "@tanstack/react-query";
+import { listSiteBPublications, getApifyActorStatus } from "@/lib/site-b/apify.functions";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Alert, AlertDescription } from "@/components/ui/alert";
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { Cloud, CheckCircle2, XCircle, ArrowLeft, Settings, Layers, ListChecks } from "lucide-react";
-import { toast } from "sonner";
-
-const statusQueryOptions = queryOptions({
-  queryKey: ["apify-actor-status"],
-  queryFn: () => getApifyActorStatus(),
-});
+import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
+import { ArrowRight, CheckCircle2, RefreshCw, Settings, XCircle } from "lucide-react";
 
 export const Route = createFileRoute("/_authenticated/migration")({
-  head: () => ({ meta: [{ title: "Publication Site B — WP Sync Manager" }] }),
-  component: MigrationPage,
+  head: () => ({ meta: [{ title: "Journal Site B — WP Sync Manager" }] }),
+  component: PublicationsJournalPage,
   errorComponent: ({ error }) => <div className="text-destructive">{error.message}</div>,
   notFoundComponent: () => <div>Introuvable</div>,
 });
 
-type Mode = "selection" | "missing";
-
-function MigrationPage() {
-  const { data: status } = useSuspenseQuery(statusQueryOptions);
-  const [postIds, setPostIds] = useState<number[]>([]);
-  const [mode, setMode] = useState<Mode>("selection");
-  const [duplicateStrategy, setDuplicateStrategy] = useState<"skip" | "overwrite" | "copy">("skip");
-
-  useEffect(() => {
-    try {
-      const raw = sessionStorage.getItem("migration:postIds");
-      if (raw) {
-        const ids = JSON.parse(raw) as number[];
-        setPostIds(ids);
-        if (ids.length > 0) setMode("selection");
-      }
-    } catch {
-      /* ignore */
-    }
-  }, []);
-
-  const run = useServerFn(runSiteBApifyBatch);
-  const mut = useMutation({
-    mutationFn: () =>
-      run({
-        data: {
-          postIds: mode === "selection" ? postIds : [],
-          scope: mode,
-          duplicateStrategy,
-        },
-      }),
-    onSuccess: (res) => toast.success(`Apify: ${res.succeeded}/${res.total} publiés`),
-    onError: (e) => toast.error(e instanceof Error ? e.message : "Erreur Apify"),
-  });
-
-  const result = mut.data;
-  const inProgress = mut.isPending;
-  const canRun =
-    status.ready &&
-    !inProgress &&
-    (mode === "missing" || (mode === "selection" && postIds.length > 0));
+function PublicationsJournalPage() {
+  const statusFn = useServerFn(getApifyActorStatus);
+  const listFn = useServerFn(listSiteBPublications);
+  const status = useQuery({ queryKey: ["apify-actor-status"], queryFn: () => statusFn() });
+  const pubs = useQuery({ queryKey: ["site-b-publications"], queryFn: () => listFn() });
 
   return (
     <div className="space-y-6">
-      <header className="flex items-start justify-between flex-wrap gap-4">
+      <header className="flex items-start justify-between gap-4 flex-wrap">
         <div>
-          <h1 className="text-2xl font-semibold tracking-tight">Publication Site B</h1>
+          <h1 className="text-2xl font-semibold tracking-tight">Journal Site B</h1>
           <p className="text-sm text-muted-foreground mt-1">
-            Site B est protégé par Sucuri : les articles sont publiés via un Actor Apify qui automatise le back-office WordPress.
+            Historique des publications envoyées sur Site B via Apify.
           </p>
         </div>
-        <Link to="/comparison" className="text-sm text-primary inline-flex items-center gap-1">
-          <ArrowLeft className="size-3" /> Retour à la comparaison
-        </Link>
+        <div className="flex gap-2">
+          <Button variant="outline" size="sm" onClick={() => pubs.refetch()} disabled={pubs.isFetching}>
+            <RefreshCw className={`size-4 mr-1.5 ${pubs.isFetching ? "animate-spin" : ""}`} />
+            Rafraîchir
+          </Button>
+          <Link to="/comparison">
+            <Button size="sm">
+              Aller à Articles Site A <ArrowRight className="size-3.5 ml-1" />
+            </Button>
+          </Link>
+        </div>
       </header>
 
-      <Alert variant={status.ready ? "default" : "destructive"}>
+      <Alert variant={status.data?.ready ? "default" : "destructive"}>
         <Settings className="size-4" />
         <AlertDescription>
-          {status.ready ? (
-            <>
-              Actor Apify configuré (<code className="text-xs">{status.actorId}</code>).
-              {status.source === "env" && (
-                <span className="block text-xs text-muted-foreground mt-1">
-                  Site B utilise les secrets globaux. Pour le multi-utilisateur, sauvegardez-le dans Connexions.
-                </span>
-              )}
-            </>
+          {status.data?.ready ? (
+            <>Actor Apify configuré (<code className="text-xs">{status.data.actorId}</code>). Les publications se déclenchent depuis « Articles Site A ».</>
           ) : (
-            status.message
+            status.data?.message ?? "Vérification…"
           )}
         </AlertDescription>
       </Alert>
 
-
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-        <Card>
-          <CardHeader>
-            <CardTitle className="text-base">Mode</CardTitle>
-            <CardDescription>
-              Sélective = articles cochés depuis la comparaison. Globale = tous les articles absents de Site B.
-            </CardDescription>
-          </CardHeader>
-          <CardContent className="space-y-4">
-            <Tabs value={mode} onValueChange={(v) => setMode(v as Mode)}>
-              <TabsList className="grid grid-cols-2 w-full">
-                <TabsTrigger value="selection">
-                  <ListChecks className="size-3.5 mr-1.5" />
-                  Sélective
-                </TabsTrigger>
-                <TabsTrigger value="missing">
-                  <Layers className="size-3.5 mr-1.5" />
-                  Globale
-                </TabsTrigger>
-              </TabsList>
-              <TabsContent value="selection" className="pt-3">
-                <p className="text-sm text-muted-foreground">
-                  {postIds.length > 0
-                    ? `${postIds.length} article(s) sélectionné(s) depuis la comparaison.`
-                    : "Aucune sélection. Retournez à Comparaison pour cocher des articles."}
-                </p>
-              </TabsContent>
-              <TabsContent value="missing" className="pt-3">
-                <p className="text-sm text-muted-foreground">
-                  Lance d'abord une lecture Site B (Apify) pour identifier les articles manquants, puis les publie tous.
-                </p>
-              </TabsContent>
-            </Tabs>
-
-            <div className="space-y-1.5">
-              <Label>Si un article avec le même slug existe déjà</Label>
-              <Select value={duplicateStrategy} onValueChange={(v) => setDuplicateStrategy(v as "skip" | "overwrite" | "copy")}>
-                <SelectTrigger><SelectValue /></SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="skip">Ignorer</SelectItem>
-                  <SelectItem value="overwrite">Écraser</SelectItem>
-                  <SelectItem value="copy">Créer une copie (slug suffixé)</SelectItem>
-                </SelectContent>
-              </Select>
+      <Card>
+        <CardHeader>
+          <CardTitle className="text-base">50 dernières publications</CardTitle>
+        </CardHeader>
+        <CardContent className="p-0">
+          {pubs.isLoading ? (
+            <div className="p-6 text-sm text-muted-foreground">Chargement…</div>
+          ) : (pubs.data ?? []).length === 0 ? (
+            <div className="p-6 text-sm text-muted-foreground text-center">
+              Aucune publication encore envoyée.
             </div>
-
-            <Button size="lg" className="w-full" disabled={!canRun} onClick={() => mut.mutate()}>
-              <Cloud className="size-4 mr-2" />
-              {inProgress
-                ? "Apify en cours…"
-                : mode === "selection"
-                  ? `Publier la sélection (${postIds.length})`
-                  : "Publier tous les articles manquants"}
-            </Button>
-          </CardContent>
-        </Card>
-
-        <Card>
-          <CardHeader>
-            <CardTitle className="text-base">Résultats</CardTitle>
-          </CardHeader>
-          <CardContent className="space-y-4">
-            {inProgress && (
-              <p className="text-sm text-muted-foreground">
-                Publication en cours. Chaque article est traité séparément sur le cloud (lots de 50 max).
-              </p>
-            )}
-            {result && (
-              <div className="space-y-3">
-                <div className="flex gap-3 flex-wrap">
-                  <Badge variant="outline" className="border-[var(--success)]/40">
-                    <CheckCircle2 className="size-3 mr-1" style={{ color: "var(--success)" }} />
-                    {result.succeeded} réussis
-                  </Badge>
-                  {result.total - result.succeeded > 0 && (
-                    <Badge variant="outline" className="border-destructive/40">
-                      <XCircle className="size-3 mr-1 text-destructive" />
-                      {result.total - result.succeeded} échecs
-                    </Badge>
-                  )}
-                  <Badge variant="outline">{result.total} total</Badge>
-                </div>
-                <ResultsTable results={result.results} />
-              </div>
-            )}
-            {!result && !inProgress && (
-              <p className="text-sm text-muted-foreground">Aucune publication lancée.</p>
-            )}
-          </CardContent>
-        </Card>
-      </div>
-    </div>
-  );
-}
-
-function ResultsTable({ results }: { results: Array<{ sourceId: number; slug: string; ok: boolean; skipped: boolean; postUrl: string | null; postId: number | null; runId: string | null; error: string | null }> }) {
-  return (
-    <div className="rounded-md border border-border max-h-72 overflow-auto text-xs">
-      <table className="w-full">
-        <thead className="bg-muted/40 sticky top-0">
-          <tr>
-            <th className="text-left p-2">Slug</th>
-            <th className="text-left p-2">État</th>
-            <th className="text-left p-2">URL</th>
-            <th className="text-left p-2">Run</th>
-          </tr>
-        </thead>
-        <tbody>
-          {results.map((r) => (
-            <tr key={r.sourceId} className="border-t border-border">
-              <td className="p-2 font-mono">{r.slug}</td>
-              <td className="p-2">
-                {r.ok ? (
-                  <span style={{ color: "var(--success)" }}>{r.skipped ? "↷" : "✓"}</span>
-                ) : (
-                  <span className="text-destructive" title={r.error ?? ""}>✗</span>
-                )}
-              </td>
-              <td className="p-2 text-muted-foreground truncate max-w-[180px]">
-                {r.postUrl ? (
-                  <a href={r.postUrl} target="_blank" rel="noreferrer" className="text-primary">
-                    {r.postUrl}
-                  </a>
-                ) : (
-                  "—"
-                )}
-              </td>
-              <td className="p-2 font-mono text-muted-foreground">{r.runId ?? "—"}</td>
-            </tr>
-          ))}
-        </tbody>
-      </table>
+          ) : (
+            <div className="overflow-x-auto">
+              <table className="w-full text-sm">
+                <thead className="bg-muted/40 border-b border-border">
+                  <tr>
+                    <th className="text-left px-3 py-2 text-xs uppercase tracking-wide text-muted-foreground">Date</th>
+                    <th className="text-left px-3 py-2 text-xs uppercase tracking-wide text-muted-foreground">Slug</th>
+                    <th className="text-left px-3 py-2 text-xs uppercase tracking-wide text-muted-foreground">Statut</th>
+                    <th className="text-left px-3 py-2 text-xs uppercase tracking-wide text-muted-foreground">URL Site B</th>
+                    <th className="text-left px-3 py-2 text-xs uppercase tracking-wide text-muted-foreground">Run</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {(pubs.data ?? []).map((p) => (
+                    <tr key={p.id} className="border-b border-border hover:bg-muted/30">
+                      <td className="px-3 py-2 text-xs text-muted-foreground whitespace-nowrap">
+                        {new Date(p.created_at).toLocaleString("fr-FR")}
+                      </td>
+                      <td className="px-3 py-2 font-mono text-xs">{p.source_slug ?? "—"}</td>
+                      <td className="px-3 py-2">
+                        {p.status === "succeeded" ? (
+                          <Badge variant="outline" className="border-[var(--success)]/40">
+                            <CheckCircle2 className="size-3 mr-1" style={{ color: "var(--success)" }} />
+                            réussi
+                          </Badge>
+                        ) : p.status === "skipped" ? (
+                          <Badge variant="outline">ignoré</Badge>
+                        ) : p.status === "failed" ? (
+                          <Badge variant="outline" className="border-destructive/40" title={p.error ?? ""}>
+                            <XCircle className="size-3 mr-1 text-destructive" />
+                            échec
+                          </Badge>
+                        ) : (
+                          <Badge variant="outline">{p.status}</Badge>
+                        )}
+                      </td>
+                      <td className="px-3 py-2 text-xs">
+                        {p.post_url ? (
+                          <a href={p.post_url} target="_blank" rel="noreferrer" className="text-primary truncate inline-block max-w-[260px] align-middle">
+                            {p.post_url}
+                          </a>
+                        ) : (
+                          "—"
+                        )}
+                      </td>
+                      <td className="px-3 py-2 font-mono text-[10px] text-muted-foreground">
+                        {p.apify_run_id ?? "—"}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </CardContent>
+      </Card>
     </div>
   );
 }
