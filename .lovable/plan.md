@@ -1,30 +1,57 @@
-## Réponse courte
+## Objectif
 
-Les 418 articles ne sont stockés nulle part dans l'app — ils restent sur le Site A. L'app les **lit à la demande** via l'API REST et les affiche dans la page **Comparaison** (`/comparison`), une ligne par article, avec leur état vis-à-vis du Site B (présent/absent/différent).
+Recentrer l'app sur **"voir les articles du Site A et les publier sur Site B via Apify"**, sans s'occuper de la comparaison ni de l'auteur, et en transférant bien les images.
 
-Aujourd'hui rien sur le Dashboard ne renvoie clairement vers cette liste, d'où ta confusion. La carte "Articles Site A — 418" est juste un compteur statique.
+---
 
-## Ce que je propose
+## 1. Supprimer la logique de comparaison
 
-Petites améliorations UX pour rendre la liste des 418 articles évidente, sans changer la logique métier.
+- **Menu** (`src/components/layout/AppShell.tsx`) : renommer "Articles & comparaison" en **"Articles Site A"**.
+- **Route** `src/routes/_authenticated/comparison.tsx` : transformer en simple **liste des articles Site A** (titre, slug, date, image à la une, statut) avec :
+  - colonne d'action **"Publier sur Site B"** par ligne,
+  - cases à cocher + bouton **"Publier la sélection sur Site B"**,
+  - **plus aucun appel à Apify list-posts** ni colonne "état dans B".
+- **`src/lib/wordpress/wp.functions.ts`** : remplacer `fetchComparison` par `listSourcePosts` (lit uniquement Site A via REST, ne touche jamais Site B).
+- **`src/services/comparison/matcher.ts`** et `hash.ts` : devenus inutiles → suppression.
+- **`src/lib/site-b/apify-batch.functions.ts`** : retirer le scope `"missing"` (qui appelait `runApifyListPosts`). Garder uniquement la publication d'une liste d'IDs sélectionnés (+ option "tous les articles Site A").
+- **`src/lib/site-b/apify-internal.server.ts`** : supprimer `runApifyListPosts` et la branche `list-posts` côté Actor (`apify-actor/.actor/input_schema.json`, `apify-actor/src/main.ts`, `types.ts`).
+- **Dashboard** : retirer toute mention "absents de B / présents dans B".
 
-### 1. Dashboard
-- Rendre la carte "Articles Site A" cliquable → navigue vers `/comparison`.
-- Ajouter sous la carte un lien explicite "Voir la liste des articles →".
-- Ajouter une mini-explication : "Les articles restent sur le Site A. L'app les lit en direct via REST pour comparer et publier."
+## 2. Rendre le flux A → B explicite dans l'UI
 
-### 2. Page Comparaison
-- Si Site B n'est pas encore lu (Apify pas lancé), afficher quand même les 418 articles du Site A avec l'état "Absent de B" par défaut, au lieu du message "Configurez les connexions" quand seul B manque.
-- Ajouter un bouton "Charger uniquement Site A" pour voir la liste sans attendre Apify.
+Sur la page **Articles Site A** :
+- bandeau d'aide en haut : *"Cochez les articles puis cliquez « Publier sur Site B ». Chaque article est envoyé via Apify (login admin WP, création de l'article, upload image à la une)."*
+- bouton principal **"Publier la sélection sur Site B"** (utilise `runSiteBApifyBatch` avec les IDs cochés).
+- bouton secondaire **"Tout publier"** (envoie tous les IDs visibles).
+- chaque ligne montre un état après envoi (succès / URL Site B / erreur), alimenté par `site_b_publications`.
 
-### 3. Menu latéral
-- Renommer "Comparaison" en "Articles & comparaison" pour qu'on comprenne que c'est là que vit la liste.
+La page **Publication Site B** devient un simple **journal des envois** (table `site_b_publications`), sans bouton "publier" — la publication se déclenche depuis la liste des articles.
+
+## 3. Upload des images du Site A vers le Site B
+
+L'Actor Apify reçoit déjà `featuredImageUrl`, mais le pipeline actuel ne l'envoie pas. À corriger :
+
+- **`src/lib/site-b/apify-batch.functions.ts`** : pour chaque post sélectionné, résoudre `featured_media` → URL publique via `getMedia(authSource, post.featured_media)` et la passer à `publishToSiteB({ ..., featuredImageUrl })`.
+- **`apify-actor/src/uploadImage.ts`** : vérifier que `setFeaturedImageFromUrl` télécharge l'image depuis Site A, l'uploade dans la bibliothèque média de Site B (via `/wp-admin/media-new.php`), puis l'associe comme image à la une de l'article. Ajouter des logs et un screenshot d'erreur si échec.
+- **Images inline du contenu** : hors périmètre pour cette itération (l'HTML continuera de pointer vers les URLs Site A). À noter dans `.lovable/plan.md` comme évolution future si besoin.
+
+## 4. Ne pas toucher l'auteur côté Site B
+
+- **`apify-actor/src/createPost.ts`** : retirer toute interaction avec le panneau "Auteur" (aucune existe aujourd'hui, mais on documente la règle dans un commentaire en tête de fichier).
+- **Payload Apify** (`apify.functions.ts`) : ne jamais inclure de champ `author`.
+- **`src/services/migration/pipeline.server.ts`** : devenu inutile (c'était l'ancien chemin REST→REST) → suppression complète + nettoyage de ses imports (`src/services/wordpress/posts.server.ts` `createPost/updatePost` restent pour Site A en lecture uniquement, mais on retire les exports non utilisés).
+
+---
 
 ## Détails techniques
 
-- `src/routes/_authenticated/dashboard.tsx` : envelopper `StatCard "Articles Site A"` dans un `<Link to="/comparison">`, ajouter une ligne d'aide.
-- `src/lib/wordpress/wp.functions.ts` → `fetchComparison` : si Site A configuré mais pas Site B, retourner `rows` = articles A avec `state: "only_on_source"` et `destinationSource: "none"` au lieu de `notConfigured: true`.
-- `src/routes/_authenticated/comparison.tsx` : retirer la branche `notConfigured` quand seul A est dispo ; afficher une bannière douce "Site B non lu — lancer Apify pour comparer".
-- `src/components/layout/AppShell.tsx` : libellé de l'entrée menu.
+- Pas de migration SQL.
+- `site_b_publications` reste tel quel.
+- `wp_connections` Site B reste utilisé pour les credentials Apify (fallback env conservé).
+- Build attendu vert ; aucun nouveau secret.
 
-Aucun changement de schéma DB, aucun appel Apify nouveau, aucune migration.
+## Hors périmètre (à confirmer si vous voulez les inclure)
+
+- Réécriture des images inline (`<img src="siteA/...">` → médias Site B).
+- Migration des catégories/tags vers Site B.
+- Pagination/recherche dans la liste Site A (418 articles → on affichera tout, triable par date).
