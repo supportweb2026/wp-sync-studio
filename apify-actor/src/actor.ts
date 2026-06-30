@@ -1,6 +1,6 @@
 import { Actor } from "apify";
 import { existsSync } from "node:fs";
-import { chromium, type Browser, type BrowserContext, type Page } from "playwright";
+import { chromium, type Browser, type BrowserContext, type Page } from "playwright-core";
 import type {
   ActorInput,
   ActorMode,
