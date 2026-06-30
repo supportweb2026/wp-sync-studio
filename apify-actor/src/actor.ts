@@ -135,12 +135,30 @@ async function resolveAdminBaseUrl(page: Page, siteUrl: string): Promise<string>
   const fromLink = adminHref ? adminBaseFromUrl(adminHref) : null;
   if (fromLink) return fromLink;
 
+  const specialCase = adminBaseFromKnownLoginUrl(siteUrl);
+  if (specialCase) {
+    console.warn(`[actor] Base admin déduite depuis l'URL de login: ${specialCase}`);
+    return specialCase;
+  }
+
   const fallback = siteUrl.replace(/\/+$/, "");
   console.warn(
     `[actor] Base admin non détectée depuis la session; fallback utilisé: ${fallback}. ` +
       `Si le login est sur /adsobra mais l'admin sur /wp, vérifiez que la page connectée expose un lien wp-admin.`,
   );
   return fallback;
+}
+
+function adminBaseFromKnownLoginUrl(rawUrl: string): string | null {
+  try {
+    const url = new URL(rawUrl);
+    if (url.pathname.replace(/\/+$/, "") === "/adsobra") {
+      return `${url.origin}/wp`;
+    }
+    return null;
+  } catch {
+    return null;
+  }
 }
 
 function adminBaseFromUrl(rawUrl: string): string | null {
