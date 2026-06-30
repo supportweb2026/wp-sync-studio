@@ -87,12 +87,20 @@ function MigrationPage() {
         <Settings className="size-4" />
         <AlertDescription>
           {status.ready ? (
-            <>Actor Apify configuré (<code className="text-xs">{status.actorId}</code>).</>
+            <>
+              Actor Apify configuré (<code className="text-xs">{status.actorId}</code>).
+              {status.source === "env" && (
+                <span className="block text-xs text-muted-foreground mt-1">
+                  Site B utilise les secrets globaux. Pour le multi-utilisateur, sauvegardez-le dans Connexions.
+                </span>
+              )}
+            </>
           ) : (
             status.message
           )}
         </AlertDescription>
       </Alert>
+
 
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
         <Card>
