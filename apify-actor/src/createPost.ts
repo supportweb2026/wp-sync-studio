@@ -1,10 +1,13 @@
 // IMPORTANT : ce fichier ne doit JAMAIS modifier l'auteur du post côté Site B.
 // Aucune interaction avec le panneau "Auteur" / boîte "Author" ne doit être
 // ajoutée. Site B conserve son auteur par défaut.
+//
+// Site B utilise l'éditeur Classique (TinyMCE) + ACF (champ Date + champ Image)
+// + Étiquettes en cases à cocher. Pas de Gutenberg.
 
-import type { Page } from "playwright-core";
+import type { Page, Frame } from "playwright-core";
 import type { ActorArticle } from "./types.js";
-import { setFeaturedImageFromUrl } from "./uploadImage.js";
+import { setAcfImageFromUrl, setFeaturedImageFromUrl } from "./uploadImage.js";
 
 export interface CreatedPost {
   postId: number;
@@ -23,143 +26,175 @@ export async function createOrUpdatePost(
     ? `${base}/wp-admin/post.php?post=${existingPostId}&action=edit`
     : `${base}/wp-admin/post-new.php?post_type=${encodeURIComponent(cptSlug)}`;
   await page.goto(target, { waitUntil: "domcontentloaded", timeout: 60_000 });
-  await page.waitForSelector("#title, .block-editor, .editor-post-title__input, [name='post_title']", {
-    timeout: 60_000,
-  });
 
-  const isGutenberg =
-    (await page.locator(".block-editor, .editor-styles-wrapper, .edit-post-layout").count()) > 0;
-
-  if (isGutenberg) {
-    await fillGutenberg(page, article);
-  } else {
-    await fillClassic(page, article);
+  // Attendre le formulaire d'édition (Classique). On utilise des sélecteurs
+  // larges puis on retombe sur le DOM réel pour logguer les inputs disponibles.
+  try {
+    await page.waitForSelector(
+      "form#post, input[name='post_title'], input[placeholder*='titre' i], input[placeholder*='title' i]",
+      { timeout: 90_000 },
+    );
+  } catch (err) {
+    const names = await page
+      .locator("form#post input, form#post textarea")
+      .evaluateAll((els) => els.slice(0, 20).map((e) => (e as HTMLInputElement).name || e.id || (e as HTMLElement).tagName))
+      .catch(() => [] as string[]);
+    console.error("[actor] Champs détectés sur la page:", names.join(", "));
+    throw err;
   }
+
+  await fillTitle(page, article.title);
+  await fillContent(page, article.content);
+  await fillSlug(page, article.slug);
+  if (article.excerpt) await page.fill("#excerpt", article.excerpt).catch(() => null);
+
+  // Champs ACF
+  if (article.date) await fillAcfDate(page, article.date);
 
   let imageWarning: string | null = null;
   if (article.featuredImageUrl) {
-    await setFeaturedImageFromUrl(page, article.featuredImageUrl).catch((e: unknown) => {
-      imageWarning = e instanceof Error ? e.message : String(e);
-      console.warn("[actor] Image à la une non définie:", imageWarning);
+    const acfHandled = await setAcfImageFromUrl(page, article.featuredImageUrl).catch((e: unknown) => {
+      console.warn("[actor] ACF image échoué, tentative image à la une standard:", e instanceof Error ? e.message : e);
+      return false;
     });
+    if (!acfHandled) {
+      await setFeaturedImageFromUrl(page, article.featuredImageUrl).catch((e: unknown) => {
+        imageWarning = e instanceof Error ? e.message : String(e);
+        console.warn("[actor] Image à la une non définie:", imageWarning);
+      });
+    }
   }
 
-  await publishOrUpdate(page, isGutenberg, Boolean(existingPostId));
+  if (article.tagSlug) await checkTagBoxes(page, [article.tagSlug]);
+
+  await publishOrUpdate(page, Boolean(existingPostId));
 
   const url = page.url();
   const m = url.match(/post=(\d+)/);
   const postId = existingPostId ?? (m ? Number(m[1]) : 0);
 
-  // Try to get the permalink
   let postUrl = "";
-  const permalink = page.locator("#sample-permalink a, .editor-post-permalink__link").first();
+  const permalink = page.locator("#sample-permalink a, #sample-permalink").first();
   if ((await permalink.count()) > 0) {
-    postUrl = (await permalink.getAttribute("href")) ?? "";
+    postUrl = (await permalink.getAttribute("href")) ?? (await permalink.innerText().catch(() => "")) ?? "";
   }
 
   if (imageWarning) console.warn(`[actor] Article publié, mais image à la une ignorée: ${imageWarning}`);
   return { postId, postUrl };
 }
 
-async function fillClassic(page: Page, article: ActorArticle): Promise<void> {
-  await page.fill("#title, [name='post_title']", article.title);
-  // Switch to Text tab to inject HTML
-  await page.click("#content-html").catch(() => null);
-  await page.fill("#content", article.content);
-  if (article.excerpt) {
-    await page.fill("#excerpt", article.excerpt).catch(() => null);
+async function fillTitle(page: Page, title: string): Promise<void> {
+  const selectors = [
+    "input[name='post_title']",
+    "#title",
+    "input[placeholder*='titre' i]",
+    "input[placeholder*='title' i]",
+  ];
+  for (const sel of selectors) {
+    const loc = page.locator(sel).first();
+    if ((await loc.count()) > 0) {
+      await loc.fill(title);
+      return;
+    }
   }
-  if (article.slug) {
-    await page.locator("input[name='post_name']").first().evaluate((el, value) => {
-      (el as HTMLInputElement).value = value as string;
-    }, article.slug).catch(() => null);
+  throw new Error("Champ titre introuvable");
+}
+
+async function fillContent(page: Page, content: string): Promise<void> {
+  // Onglet "Code" / HTML pour injecter directement.
+  const htmlTab = page.locator("#content-html, button.switch-html").first();
+  if ((await htmlTab.count()) > 0) {
+    await htmlTab.click().catch(() => null);
+    const textarea = page.locator("textarea#content").first();
+    if ((await textarea.count()) > 0) {
+      await textarea.fill(content);
+      return;
+    }
+  }
+  // Fallback : iframe TinyMCE
+  const frameEl = await page.$("iframe#content_ifr");
+  if (frameEl) {
+    const frame = (await frameEl.contentFrame()) as Frame | null;
+    if (frame) {
+      await frame.evaluate((html) => {
+        const body = document.body as HTMLElement;
+        body.innerHTML = html;
+      }, content);
+      return;
+    }
+  }
+  // Dernier recours
+  const ta = page.locator("textarea#content, textarea[name='content']").first();
+  if ((await ta.count()) > 0) await ta.fill(content);
+}
+
+async function fillSlug(page: Page, slug: string): Promise<void> {
+  if (!slug) return;
+  await page.locator("input[name='post_name']").first().evaluate((el, value) => {
+    (el as HTMLInputElement).value = value as string;
+  }, slug).catch(() => null);
+  if ((await page.locator("#edit-slug-buttons button.edit-slug").count()) > 0) {
     await page.click("#edit-slug-buttons button.edit-slug").catch(() => null);
-    await page.fill("#new-post-slug", article.slug).catch(() => null);
+    await page.fill("#new-post-slug", slug).catch(() => null);
     await page.click("#edit-slug-buttons button.save").catch(() => null);
   }
-  if (article.date) await setClassicDate(page, article.date);
-  if (article.tagSlug) {
-    await page.fill(".tagsdiv .newtag", article.tagSlug).catch(() => null);
-    await page.click(".tagsdiv input.tagadd").catch(() => null);
-  }
 }
 
-async function fillGutenberg(page: Page, article: ActorArticle): Promise<void> {
-  await dismissGutenbergOverlays(page);
-  const editedViaWpData = await page.evaluate((payload) => {
-    const w = window as typeof window & {
-      wp?: {
-        data?: { dispatch?: (store: string) => { editPost?: (data: Record<string, unknown>) => void } };
-      };
-    };
-    const editPost = w.wp?.data?.dispatch?.("core/editor")?.editPost;
-    if (!editPost) return false;
-    editPost({
-      title: payload.title,
-      content: payload.content,
-      excerpt: payload.excerpt || "",
-      slug: payload.slug,
-      date: payload.date,
-    });
-    return true;
-  }, article).catch(() => false);
-
-  if (!editedViaWpData) {
-    const title = page.locator(".editor-post-title__input, [aria-label*='Ajouter un titre'], [aria-label*='Add title']").first();
-    await title.fill(article.title);
-    await page.keyboard.press("Control+Shift+Alt+M").catch(() => null);
-    const codeArea = page.locator("textarea.editor-post-text-editor");
-    if ((await codeArea.count()) > 0) {
-      await codeArea.fill(article.content);
-      await page.keyboard.press("Control+Shift+Alt+M").catch(() => null);
-    }
-  }
-}
-
-async function dismissGutenbergOverlays(page: Page): Promise<void> {
-  await page.getByRole("button", { name: /fermer|close/i }).click({ timeout: 2_000 }).catch(() => null);
-  await page.getByRole("button", { name: /désactiver le mode plein écran|disable fullscreen/i }).click({ timeout: 2_000 }).catch(() => null);
-}
-
-async function publishOrUpdate(page: Page, isGutenberg: boolean, isUpdate: boolean): Promise<void> {
-  if (isGutenberg) {
-    await dismissGutenbergOverlays(page);
-    const primary = page.getByRole("button", {
-      name: isUpdate ? /mettre à jour|update/i : /publier|publish/i,
-    });
-    await primary.first().click({ timeout: 30_000 });
-    if (!isUpdate) {
-      await page
-        .locator(".editor-post-publish-panel button, .components-modal__frame button")
-        .filter({ hasText: /publier|publish/i })
-        .last()
-        .click({ timeout: 15_000 })
-        .catch(async () => {
-          await page.getByRole("button", { name: /publier|publish/i }).last().click({ timeout: 15_000 });
-        });
-    }
-    await page.waitForSelector(
-      ".components-snackbar, .post-publish-panel__postpublish, .editor-post-publish-panel__postpublish, a.post-edit-link",
-      { timeout: 90_000 },
-    );
-    return;
-  }
-
-  const button = isUpdate ? page.locator("#publish") : page.locator("#publish");
-  await button.click({ timeout: 30_000 });
-  await page.waitForSelector("#message.updated, a.post-edit-link, #publish[value*='Mettre'], #publish[value*='Update']", {
-    timeout: 90_000,
-  });
-}
-
-async function setClassicDate(page: Page, isoDate: string): Promise<void> {
+async function fillAcfDate(page: Page, isoDate: string): Promise<void> {
   const d = new Date(isoDate);
   if (Number.isNaN(d.getTime())) return;
-  await page.click("a.edit-timestamp").catch(() => null);
-  await page.fill("#aa", String(d.getFullYear())).catch(() => null);
-  await page.selectOption("#mm", String(d.getMonth() + 1).padStart(2, "0")).catch(() => null);
-  await page.fill("#jj", String(d.getDate()).padStart(2, "0")).catch(() => null);
-  await page.fill("#hh", String(d.getHours()).padStart(2, "0")).catch(() => null);
-  await page.fill("#mn", String(d.getMinutes()).padStart(2, "0")).catch(() => null);
-  await page.click(".save-timestamp").catch(() => null);
+  const dd = String(d.getDate()).padStart(2, "0");
+  const mm = String(d.getMonth() + 1).padStart(2, "0");
+  const yyyy = String(d.getFullYear());
+
+  // ACF datepicker : label "Date" → input texte dans .acf-field
+  const field = page.locator(".acf-field-date-picker, .acf-field").filter({ hasText: /^date$/i }).first();
+  if ((await field.count()) === 0) {
+    // Fallback: champ par label dans la métabox "Champs Actualités"
+    const generic = page.getByLabel(/^date$/i).first();
+    if ((await generic.count()) > 0) {
+      await generic.fill(`${dd}/${mm}/${yyyy}`).catch(() => null);
+      await page.keyboard.press("Escape").catch(() => null);
+    }
+    return;
+  }
+  const input = field.locator("input.input, input[type='text']").first();
+  if ((await input.count()) === 0) return;
+  // ACF: alt-input visible + hidden input avec format AAAAMMJJ
+  await input.click().catch(() => null);
+  await input.fill(`${dd}/${mm}/${yyyy}`).catch(() => null);
+  await page.keyboard.press("Escape").catch(() => null);
+  // Force la valeur hidden si présente
+  await field.locator("input.input-alt, input[type='hidden']").first().evaluate((el, val) => {
+    (el as HTMLInputElement).value = val as string;
+  }, `${yyyy}${mm}${dd}`).catch(() => null);
+}
+
+async function checkTagBoxes(page: Page, tags: string[]): Promise<void> {
+  for (const tag of tags) {
+    const label = page
+      .locator(".categorydiv label, .inside label, .tagsdiv label")
+      .filter({ hasText: new RegExp(`^\\s*${tag.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\s*$`, "i") })
+      .first();
+    if ((await label.count()) > 0) {
+      await label.locator("input[type='checkbox']").check({ force: true }).catch(() => null);
+      continue;
+    }
+    // Fallback champ texte type tagadd
+    const newtag = page.locator(".tagsdiv .newtag").first();
+    if ((await newtag.count()) > 0) {
+      await newtag.fill(tag).catch(() => null);
+      await page.locator(".tagsdiv input.tagadd").first().click().catch(() => null);
+    }
+  }
+}
+
+async function publishOrUpdate(page: Page, isUpdate: boolean): Promise<void> {
+  const button = page.locator("#publish").first();
+  await button.click({ timeout: 30_000 });
+  await page.waitForSelector(
+    "#message.updated, #message.notice-success, a.post-edit-link, #publish[value*='Mettre'], #publish[value*='Update']",
+    { timeout: 90_000 },
+  );
+  void isUpdate;
 }
