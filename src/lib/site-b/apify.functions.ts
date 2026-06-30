@@ -131,6 +131,27 @@ export const publishToSiteB = createServerFn({ method: "POST" })
     }
   });
 
+export const getApifyActorStatus = createServerFn({ method: "GET" })
+  .middleware([requireSupabaseAuth])
+  .handler(async () => {
+    const actorId = process.env.APIFY_ACTOR_ID;
+    const token = process.env.APIFY_API_TOKEN;
+    const siteUrl = process.env.SITE_B_URL;
+    const username = process.env.SITE_B_USERNAME;
+    const password = process.env.SITE_B_PASSWORD;
+
+    if (!actorId) {
+      return { ready: false, actorId: null, message: "Actor Apify non configuré : ajoutez le secret APIFY_ACTOR_ID après avoir fait apify push." };
+    }
+    if (!token) {
+      return { ready: false, actorId, message: "Token Apify manquant (APIFY_API_TOKEN)." };
+    }
+    if (!siteUrl || !username || !password) {
+      return { ready: false, actorId, message: "Identifiants Site B incomplets (SITE_B_URL, SITE_B_USERNAME, SITE_B_PASSWORD)." };
+    }
+    return { ready: true, actorId, message: "Prêt à publier." };
+  });
+
 export const listSiteBPublications = createServerFn({ method: "GET" })
   .middleware([requireSupabaseAuth])
   .handler(async ({ context }) => {
