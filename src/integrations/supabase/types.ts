@@ -53,6 +53,54 @@ export type Database = {
         }
         Relationships: []
       }
+      site_b_publications: {
+        Row: {
+          apify_run_id: string | null
+          created_at: string
+          error: string | null
+          id: string
+          input: Json
+          output: Json | null
+          post_id: number | null
+          post_url: string | null
+          source_post_id: number | null
+          source_slug: string | null
+          status: string
+          updated_at: string
+          user_id: string
+        }
+        Insert: {
+          apify_run_id?: string | null
+          created_at?: string
+          error?: string | null
+          id?: string
+          input?: Json
+          output?: Json | null
+          post_id?: number | null
+          post_url?: string | null
+          source_post_id?: number | null
+          source_slug?: string | null
+          status?: string
+          updated_at?: string
+          user_id: string
+        }
+        Update: {
+          apify_run_id?: string | null
+          created_at?: string
+          error?: string | null
+          id?: string
+          input?: Json
+          output?: Json | null
+          post_id?: number | null
+          post_url?: string | null
+          source_post_id?: number | null
+          source_slug?: string | null
+          status?: string
+          updated_at?: string
+          user_id?: string
+        }
+        Relationships: []
+      }
       wp_connections: {
         Row: {
           app_password_encrypted: string
