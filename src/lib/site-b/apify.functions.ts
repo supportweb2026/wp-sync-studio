@@ -151,7 +151,7 @@ export const publishToSiteB = createServerFn({ method: "POST" })
     const siteUrl = dest?.siteUrl ?? process.env.SITE_B_URL;
     const username = dest?.username ?? process.env.SITE_B_USERNAME;
     const password = dest?.password ?? process.env.SITE_B_PASSWORD;
-    const loginPath = dest?.loginPath ?? process.env.SITE_B_LOGIN_PATH ?? "/wp-admin";
+    const loginPath = dest?.loginPath ?? process.env.SITE_B_LOGIN_PATH ?? "";
     if (!siteUrl || !username || !password) {
       throw new Error("Connexion Site B introuvable (configurez-la dans Connexions)");
     }

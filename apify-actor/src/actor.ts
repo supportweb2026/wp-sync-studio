@@ -31,7 +31,7 @@ export async function runActor(): Promise<void> {
 
     const cfg = input;
     mode = cfg.mode ?? "publish";
-    const loginPath = cfg.loginPath ?? "/wp-admin";
+    const loginPath = cfg.loginPath ?? "";
     let cptSlug = cfg.cptSlug ?? "actualite";
     const dupStrategy = cfg.duplicateStrategy ?? "skip";
     console.log(`[actor] Input chargé: mode=${mode}, site=${cfg.siteUrl}, cpt=${cptSlug}`);

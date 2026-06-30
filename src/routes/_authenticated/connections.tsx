@@ -148,7 +148,7 @@ function DestinationForm({ current }: { current?: PublicConnection }) {
   const [siteUrl, setSiteUrl] = useState(current?.siteUrl ?? "");
   const [username, setUsername] = useState(current?.username ?? "");
   const [appPassword, setAppPassword] = useState("");
-  const [loginPath, setLoginPath] = useState(current?.loginPath ?? "/wp-admin");
+  const [loginPath, setLoginPath] = useState(current?.loginPath ?? "");
 
   const saveMut = useMutation({
     mutationFn: () =>
@@ -174,7 +174,7 @@ function DestinationForm({ current }: { current?: PublicConnection }) {
     mutationFn: () => remove({ data: { role: "destination" } }),
     onSuccess: () => {
       toast.success("Site B supprimé");
-      setSiteUrl(""); setUsername(""); setAppPassword(""); setLoginPath("/wp-admin");
+      setSiteUrl(""); setUsername(""); setAppPassword(""); setLoginPath("");
       qc.invalidateQueries({ queryKey: ["connections"] });
     },
   });
@@ -218,8 +218,11 @@ function DestinationForm({ current }: { current?: PublicConnection }) {
               />
             </Field>
           </div>
-          <Field label="Chemin de connexion">
-            <Input value={loginPath} onChange={(e) => setLoginPath(e.target.value)} placeholder="/wp-admin" />
+          <Field label="Chemin de connexion (optionnel)">
+            <Input value={loginPath} onChange={(e) => setLoginPath(e.target.value)} placeholder="(vide) — ou /wp-login.php, /wp-admin" />
+            <p className="text-xs text-muted-foreground">
+              URL exacte où s'affiche le formulaire WordPress. Laissez vide si le login apparaît directement sur l'URL du site.
+            </p>
           </Field>
           <Actions
             saving={saveMut.isPending}
