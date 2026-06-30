@@ -62,6 +62,15 @@ function PublicationsJournalPage() {
         </AlertDescription>
       </Alert>
 
+      {running > 0 && (
+        <Alert>
+          <RefreshCw className="size-4 animate-spin" />
+          <AlertDescription>
+            {running} publication(s) en cours… La page se rafraîchit automatiquement.
+          </AlertDescription>
+        </Alert>
+      )}
+
       <Card>
         <CardHeader>
           <CardTitle className="text-base">50 dernières publications</CardTitle>
