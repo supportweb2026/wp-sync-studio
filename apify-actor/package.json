@@ -8,8 +8,10 @@
   },
   "dependencies": {
     "apify": "^3.2.6",
-    "playwright": "^1.48.0",
     "typescript": "^5.6.0"
+  },
+  "peerDependencies": {
+    "playwright": "*"
   },
   "devDependencies": {
     "@types/node": "^22.0.0"
