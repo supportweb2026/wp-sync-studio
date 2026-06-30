@@ -2,7 +2,7 @@
 // Aucune interaction avec le panneau "Auteur" / boîte "Author" ne doit être
 // ajoutée. Site B conserve son auteur par défaut.
 
-import type { Page } from "playwright";
+import type { Page } from "playwright-core";
 import type { ActorArticle } from "./types.js";
 import { setFeaturedImageFromUrl } from "./uploadImage.js";
 

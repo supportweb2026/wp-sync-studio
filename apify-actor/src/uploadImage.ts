@@ -1,4 +1,4 @@
-import type { Page } from "playwright";
+import type { Page } from "playwright-core";
 
 /**
  * Télécharge une image depuis son URL publique (Site A) puis l'uploade
