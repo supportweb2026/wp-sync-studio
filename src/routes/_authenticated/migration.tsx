@@ -11,7 +11,8 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Label } from "@/components/ui/label";
 import { Badge } from "@/components/ui/badge";
 import { Alert, AlertDescription } from "@/components/ui/alert";
-import { Cloud, CheckCircle2, XCircle, ArrowLeft, Settings } from "lucide-react";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { Cloud, CheckCircle2, XCircle, ArrowLeft, Settings, Layers, ListChecks } from "lucide-react";
 import { toast } from "sonner";
 
 const statusQueryOptions = queryOptions({
@@ -26,15 +27,22 @@ export const Route = createFileRoute("/_authenticated/migration")({
   notFoundComponent: () => <div>Introuvable</div>,
 });
 
+type Mode = "selection" | "missing";
+
 function MigrationPage() {
   const { data: status } = useSuspenseQuery(statusQueryOptions);
   const [postIds, setPostIds] = useState<number[]>([]);
+  const [mode, setMode] = useState<Mode>("selection");
   const [duplicateStrategy, setDuplicateStrategy] = useState<"skip" | "overwrite" | "copy">("skip");
 
   useEffect(() => {
     try {
       const raw = sessionStorage.getItem("migration:postIds");
-      if (raw) setPostIds(JSON.parse(raw) as number[]);
+      if (raw) {
+        const ids = JSON.parse(raw) as number[];
+        setPostIds(ids);
+        if (ids.length > 0) setMode("selection");
+      }
     } catch {
       /* ignore */
     }
@@ -42,13 +50,24 @@ function MigrationPage() {
 
   const run = useServerFn(runSiteBApifyBatch);
   const mut = useMutation({
-    mutationFn: () => run({ data: { postIds, duplicateStrategy } }),
+    mutationFn: () =>
+      run({
+        data: {
+          postIds: mode === "selection" ? postIds : [],
+          scope: mode,
+          duplicateStrategy,
+        },
+      }),
     onSuccess: (res) => toast.success(`Apify: ${res.succeeded}/${res.total} publiés`),
     onError: (e) => toast.error(e instanceof Error ? e.message : "Erreur Apify"),
   });
 
   const result = mut.data;
   const inProgress = mut.isPending;
+  const canRun =
+    status.ready &&
+    !inProgress &&
+    (mode === "missing" || (mode === "selection" && postIds.length > 0));
 
   return (
     <div className="space-y-6">
@@ -56,9 +75,7 @@ function MigrationPage() {
         <div>
           <h1 className="text-2xl font-semibold tracking-tight">Publication Site B</h1>
           <p className="text-sm text-muted-foreground mt-1">
-            {postIds.length > 0
-              ? `${postIds.length} article(s) sélectionné(s) depuis la comparaison.`
-              : "Sélectionnez des articles depuis la page Comparaison."}
+            Site B est protégé par Sucuri : les articles sont publiés via un Actor Apify qui automatise le back-office WordPress.
           </p>
         </div>
         <Link to="/comparison" className="text-sm text-primary inline-flex items-center gap-1">
@@ -80,12 +97,37 @@ function MigrationPage() {
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
         <Card>
           <CardHeader>
-            <CardTitle className="text-base">Options</CardTitle>
+            <CardTitle className="text-base">Mode</CardTitle>
             <CardDescription>
-              Site B est protégé par Sucuri. Les articles sont publiés via Apify (automatisation cloud du back-office WordPress).
+              Sélective = articles cochés depuis la comparaison. Globale = tous les articles absents de Site B.
             </CardDescription>
           </CardHeader>
           <CardContent className="space-y-4">
+            <Tabs value={mode} onValueChange={(v) => setMode(v as Mode)}>
+              <TabsList className="grid grid-cols-2 w-full">
+                <TabsTrigger value="selection">
+                  <ListChecks className="size-3.5 mr-1.5" />
+                  Sélective
+                </TabsTrigger>
+                <TabsTrigger value="missing">
+                  <Layers className="size-3.5 mr-1.5" />
+                  Globale
+                </TabsTrigger>
+              </TabsList>
+              <TabsContent value="selection" className="pt-3">
+                <p className="text-sm text-muted-foreground">
+                  {postIds.length > 0
+                    ? `${postIds.length} article(s) sélectionné(s) depuis la comparaison.`
+                    : "Aucune sélection. Retournez à Comparaison pour cocher des articles."}
+                </p>
+              </TabsContent>
+              <TabsContent value="missing" className="pt-3">
+                <p className="text-sm text-muted-foreground">
+                  Lance d'abord une lecture Site B (Apify) pour identifier les articles manquants, puis les publie tous.
+                </p>
+              </TabsContent>
+            </Tabs>
+
             <div className="space-y-1.5">
               <Label>Si un article avec le même slug existe déjà</Label>
               <Select value={duplicateStrategy} onValueChange={(v) => setDuplicateStrategy(v as "skip" | "overwrite" | "copy")}>
@@ -97,14 +139,14 @@ function MigrationPage() {
                 </SelectContent>
               </Select>
             </div>
-            <Button
-              size="lg"
-              className="w-full"
-              disabled={postIds.length === 0 || inProgress || !status.ready}
-              onClick={() => mut.mutate()}
-            >
+
+            <Button size="lg" className="w-full" disabled={!canRun} onClick={() => mut.mutate()}>
               <Cloud className="size-4 mr-2" />
-              {inProgress ? "Apify en cours…" : `Publier sur Site B via Apify (${postIds.length})`}
+              {inProgress
+                ? "Apify en cours…"
+                : mode === "selection"
+                  ? `Publier la sélection (${postIds.length})`
+                  : "Publier tous les articles manquants"}
             </Button>
           </CardContent>
         </Card>
@@ -116,7 +158,7 @@ function MigrationPage() {
           <CardContent className="space-y-4">
             {inProgress && (
               <p className="text-sm text-muted-foreground">
-                Publication en cours sur Apify. Chaque article est traité séparément sur le cloud.
+                Publication en cours. Chaque article est traité séparément sur le cloud (lots de 50 max).
               </p>
             )}
             {result && (
