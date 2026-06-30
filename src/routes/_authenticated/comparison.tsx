@@ -74,11 +74,28 @@ function ArticlesPage() {
     );
   }, [rows, search]);
 
+  const [pendingIds, setPendingIds] = useState<Set<number>>(new Set());
   const mut = useMutation({
-    mutationFn: (postIds: number[]) =>
-      runBatch({ data: { postIds, duplicateStrategy } }),
+    mutationFn: (postIds: number[]) => {
+      setPendingIds(new Set(postIds));
+      const tid = toast.loading(`Publication de ${postIds.length} article(s) sur Site B…`, { id: "pub-site-b" });
+      return runBatch({ data: { postIds, duplicateStrategy } }).finally(() => {
+        toast.dismiss(tid);
+        setPendingIds(new Set());
+      });
+    },
     onSuccess: (res) => {
-      toast.success(`Site B : ${res.succeeded}/${res.total} publié(s)`);
+      const failed = res.results.filter((r) => !r.ok);
+      if (failed.length === 0) {
+        toast.success(`Site B : ${res.succeeded}/${res.total} publié(s)`);
+      } else {
+        const first = failed[0];
+        toast.error(
+          `Site B : ${res.succeeded}/${res.total} publié(s) — ${failed.length} échec(s). Premier: ${first.slug} → ${first.error ?? "erreur inconnue"}`,
+          { duration: 12000 },
+        );
+        console.error("[Site B] échecs:", failed);
+      }
       qc.invalidateQueries({ queryKey: ["site-b-publications"] });
     },
     onError: (e) => toast.error(e instanceof Error ? e.message : "Erreur de publication"),
