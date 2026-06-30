@@ -7,12 +7,13 @@ export interface ExistingPost {
 
 export async function findBySlug(
   page: Page,
-  siteUrl: string,
+  adminBaseUrl: string,
   cptSlug: string,
   slug: string,
 ): Promise<ExistingPost | null> {
-  const base = siteUrl.replace(/\/+$/, "");
+  const base = adminBaseUrl.replace(/\/+$/, "");
   const url = `${base}/wp-admin/edit.php?post_type=${encodeURIComponent(cptSlug)}&s=${encodeURIComponent(slug)}`;
+  console.log(`[actor] Recherche doublon via: ${url}`);
   await page.goto(url, { waitUntil: "domcontentloaded", timeout: 60_000 });
   const link = page.locator(`a.row-title`).first();
   if ((await link.count()) === 0) return null;

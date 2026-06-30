@@ -120,6 +120,7 @@ export async function login(
   password: string,
 ): Promise<void> {
   const target = buildLoginUrl(siteUrl, loginPath);
+  console.log(`[actor] URL de connexion utilisée: ${target}`);
   await page.goto(target, { waitUntil: "domcontentloaded", timeout: 60_000 });
   await page.waitForLoadState("networkidle", { timeout: 15_000 }).catch(() => null);
 
