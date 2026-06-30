@@ -17,7 +17,7 @@ import { Toaster } from "@/components/ui/sonner";
 const nav = [
   { to: "/dashboard", label: "Dashboard", icon: LayoutDashboard },
   { to: "/connections", label: "Connexions", icon: PlugZap },
-  { to: "/comparison", label: "Comparaison", icon: GitCompareArrows },
+  { to: "/comparison", label: "Articles & comparaison", icon: GitCompareArrows },
   { to: "/migration", label: "Publication Site B", icon: Cloud },
   { to: "/journal", label: "Journal", icon: ScrollText },
 ] as const;
