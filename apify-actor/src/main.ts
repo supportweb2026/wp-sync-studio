@@ -1,5 +1,5 @@
 import { Actor } from "apify";
-import { chromium } from "playwright";
+import { chromium, type Page } from "playwright";
 import type {
   ActorInput,
   ActorOutput,
@@ -20,7 +20,7 @@ if (!input) {
 const cfg = input as ActorInput;
 const mode = cfg.mode ?? "publish";
 const loginPath = cfg.loginPath ?? "/wp-admin";
-const cptSlug = cfg.cptSlug ?? "actualite";
+let cptSlug = cfg.cptSlug ?? "actualite";
 const dupStrategy = cfg.duplicateStrategy ?? "skip";
 
 const browser = await chromium.launch({ headless: true });
@@ -30,10 +30,15 @@ const context = await browser.newContext({
   viewport: { width: 1366, height: 900 },
 });
 const page = await context.newPage();
+page.setDefaultTimeout(30_000);
+page.setDefaultNavigationTimeout(60_000);
 
 let output: ActorOutput = { ok: false, error: "unknown" } as ActorOutput;
+let stage = "initialisation";
 try {
+  stage = "connexion au back-office WordPress";
   await login(page, cfg.siteUrl, loginPath, cfg.username, cfg.password);
+  cptSlug = await resolveActualitesPostType(page, cptSlug);
 
   if (mode === "login-check") {
     const out: ActorLoginCheckOutput = {
@@ -44,6 +49,7 @@ try {
     output = out;
   } else {
     if (!cfg.article) throw new Error("Champ 'article' manquant pour mode publish");
+    stage = `recherche d'un doublon pour le slug ${cfg.article.slug}`;
     const existing = await findBySlug(page, cfg.siteUrl, cptSlug, cfg.article.slug);
 
     if (existing && dupStrategy === "skip") {
@@ -55,12 +61,14 @@ try {
       }
       const targetId = existing && dupStrategy === "overwrite" ? existing.postId : null;
       // NOTE: l'auteur du post n'est jamais modifié — Site B garde son auteur par défaut.
+      stage = targetId ? `mise à jour de l'actualité ${targetId}` : "création de l'actualité";
       const created = await createOrUpdatePost(page, cfg.siteUrl, cptSlug, articleToPost, targetId);
       output = { ok: true, skipped: false, postId: created.postId, postUrl: created.postUrl };
     }
   }
 } catch (err) {
-  const message = err instanceof Error ? err.message : String(err);
+  const rawMessage = err instanceof Error ? err.message : String(err);
+  const message = `Étape "${stage}" échouée: ${rawMessage}`;
   console.error("[actor]", message);
   try {
     const buf = await page.screenshot({ fullPage: true });
@@ -82,3 +90,27 @@ try {
 
 await Actor.pushData(output);
 await Actor.exit();
+
+async function resolveActualitesPostType(page: Page, requested: string): Promise<string> {
+  const links = await page.locator("#adminmenu a[href*='post_type='], a[href*='post-new.php']").evaluateAll((anchors) =>
+    anchors.map((a) => ({
+      text: (a.textContent ?? "").trim().toLowerCase(),
+      href: (a as HTMLAnchorElement).href,
+    })),
+  ).catch(() => [] as Array<{ text: string; href: string }>);
+
+  const slugs = links
+    .map((link) => {
+      const url = new URL(link.href);
+      return { text: link.text, slug: url.searchParams.get("post_type") };
+    })
+    .filter((item): item is { text: string; slug: string } => Boolean(item.slug));
+
+  if (slugs.some((item) => item.slug === requested)) return requested;
+  const actualites = slugs.find((item) => /actualit|news/i.test(`${item.text} ${item.slug}`));
+  if (actualites) {
+    console.log(`[actor] Type de contenu Site B détecté: ${actualites.slug} (au lieu de ${requested})`);
+    return actualites.slug;
+  }
+  return requested;
+}
