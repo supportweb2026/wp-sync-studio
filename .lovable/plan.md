@@ -1,75 +1,36 @@
-## Plan de correction
+Je comprends : le run n’arrive même plus à l’étape “Actualités → Ajouter un article”. Il échoue avant, au login, parce que l’Actor attend des sélecteurs WordPress standards (`#user_login`, `#user_pass`) sur `https://sobraga.com/adsobra`, alors que ce lien correspond à votre procédure d’accès spécifique.
 
-### Le vrai blocage actuel
+Plan ciblé :
 
-L’Actor se connecte, mais l’URL `post-new.php?post_type=actualites` ne montre pas le formulaire attendu (timeout sur le champ titre, et `Champs détectés sur la page:` vide → la page n’a même pas de `form#post`). Il faut donc reproduire votre parcours manuel et diagnostiquer ce qui s’affiche réellement.
+1. Corriger l’input envoyé à Apify
+   - Remplacer le `cptSlug` envoyé par l’app de `actualite` vers `actualites`, car le log montre encore `cpt=actualite` malgré le schéma Actor.
+   - Conserver `siteUrl=https://sobraga.com/adsobra` et `loginPath=""`.
 
-### 1. Reproduire votre parcours dans le back-office
+2. Rendre le login compatible avec votre lien réel
+   - Ne plus supposer que la page contient forcément `#user_login` / `#user_pass`.
+   - Ajouter une détection de formulaire de login plus large : champs visibles de type texte/email/password, boutons “Connexion / Se connecter / Log in”.
+   - Si les champs WordPress standards n’existent pas, remplir le premier champ utilisateur visible + le premier champ mot de passe visible, puis cliquer le bouton de connexion.
+   - Après soumission, valider la réussite par présence du menu admin WordPress (`#adminmenu`, `#wpadminbar`, `wp-admin`) au lieu de dépendre uniquement de `#wpadminbar`.
 
-Après login, l’Actor :
-
-```text
-Menu Actualités → clic "Ajouter un article" → attend le formulaire
-```
-
-Si l’URL directe ne donne pas le formulaire (page vide, redirection, blocage Sucuri, écran inattendu), il bascule sur la navigation par le menu comme vous le faites.
-
-### 2. Logs de diagnostic AVANT le timeout
-
-Avant d’attendre 90 s sur le titre, l’Actor journalisera :
-
-- URL réelle atteinte + titre de la page
-- présence/absence de `form#post`
-- liste des inputs visibles
-- détection d’un écran Sucuri / erreur WP / page vide
-
-Si ça échoue encore, on saura immédiatement où il est arrivé.
-
-### 3. Remplissage du formulaire (selon votre capture)
-
-- Titre : `input[name='post_title']` (placeholder « Saisissez le titre »)
-- Contenu : éditeur Classique TinyMCE
-- Date ACF : champ texte du `.acf-field` « Date »
-- Étiquettes : cases à cocher
-- Bouton `#publish`
-- Auteur : non touché
-
-### 4. Upload d’image ACF (réponse à votre question)
-
-Pas besoin d’ouvrir l’explorateur de fichiers système. Playwright écrit directement dans le `<input type="file">` masqué de la popup WordPress :
+3. Ne pas inventer un autre chemin de création
+   - Après connexion réussie, suivre exactement le parcours que vous avez donné :
 
 ```text
-1. Télécharger l'image depuis Site A en mémoire (fetch → buffer)
-2. Clic "Ajouter une image" (champ ACF) → popup média WP
-3. Clic onglet "Téléverser des fichiers"
-4. setInputFiles({name, mimeType, buffer}) sur l'input file caché
-   (n'ouvre PAS le gestionnaire de fichiers de l'OS)
-5. Attente vignette "sélectionnée"
-6. Clic bouton bleu "Sélectionner" pour valider dans le champ ACF
+Actualités → Ajouter un article → Titre → Contenu → Date → Ajouter une image → Étiquettes → Publier
 ```
 
-C’est déjà ce que fait `uploadImage.ts` — donc pas de changement côté upload.
+   - La navigation directe `post-new.php?...` ne sera qu’un fallback, pas le chemin principal.
 
-### 5. Alignement CPT par défaut
+4. Ajouter des logs utiles au login
+   - En cas d’échec, enregistrer dans les logs : URL réelle, titre de page, formulaires détectés, champs visibles détectés, boutons/liens visibles.
+   - Comme ça, si le lien affiche une page intermédiaire, un blocage Sucuri ou un autre formulaire, on verra exactement quoi adapter.
 
-Mettre `actualites` (et non `actualite`) en valeur par défaut pour éviter la confusion dans les logs.
+5. Garder l’upload image tel quel
+   - Pour la popup “Ajouter une image → Téléverser des fichiers → Sélectionnez des fichiers”, Playwright continuera à injecter le fichier directement dans l’input file caché avec `setInputFiles`; il n’ouvre pas de gestionnaire de fichiers.
 
-### 6. Validation attendue dans Apify
+Fichiers à modifier :
+- `src/lib/site-b/apify.functions.ts` pour envoyer `actualites`.
+- `apify-actor/src/login.ts` pour gérer votre formulaire réel au lieu du login WordPress standard uniquement.
+- `apify-actor/src/createPost.ts` pour privilégier le parcours menu “Actualités → Ajouter un article”.
 
-```text
-[actor] Connexion OK
-[actor] Ouverture Actualités via le menu
-[actor] Formulaire actualité détecté (URL=..., title=...)
-[actor] Titre rempli / Contenu rempli / Date remplie
-[actor] Image ACF téléversée
-[actor] Publication confirmée
-```
-
-Si l’écran réel diffère, les logs diront exactement quelle page a été atteinte au lieu d’un timeout muet.
-
-### Fichiers touchés
-
-- `apify-actor/src/createPost.ts` (navigation par menu + logs diagnostic + remplissage)
-- `apify-actor/.actor/input_schema.json` (défaut `cptSlug` → `actualites`)
-- Pas de changement à `uploadImage.ts` ni à `login.ts`
-- Aucun changement côté app Lovable / DB / secrets
+Après approbation, je fais uniquement ces corrections ciblées.

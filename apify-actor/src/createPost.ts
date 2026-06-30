@@ -205,45 +205,33 @@ async function publishOrUpdate(page: Page, isUpdate: boolean): Promise<void> {
  */
 async function openNewPostForm(page: Page, base: string, cptSlug: string): Promise<void> {
   const directUrl = `${base}/wp-admin/post-new.php?post_type=${encodeURIComponent(cptSlug)}`;
-  console.log(`[actor] Ouverture directe: ${directUrl}`);
-  await page.goto(directUrl, { waitUntil: "domcontentloaded", timeout: 60_000 });
-
-  // Tentative rapide : si le formulaire apparaît en 8s, on s'arrête là.
-  try {
-    await page.waitForSelector("form#post input[name='post_title']", { timeout: 8_000 });
-    return;
-  } catch {
-    /* fallback navigation par menu */
-  }
-
-  console.log("[actor] URL directe sans formulaire, navigation via menu Actualités");
-  // Aller au dashboard pour avoir le menu admin de manière fiable
+  console.log("[actor] Ouverture Actualités via le menu WordPress");
   await page.goto(`${base}/wp-admin/`, { waitUntil: "domcontentloaded", timeout: 60_000 });
 
-  // Hover sur l'item "Actualités" puis clic sur "Ajouter un article"
-  const menuItem = page
-    .locator(`#adminmenu a[href*='post_type=${cptSlug}']`)
-    .first();
-  if ((await menuItem.count()) === 0) {
-    // Fallback par texte
-    const byText = page.locator("#adminmenu a").filter({ hasText: /actualit/i }).first();
-    if ((await byText.count()) > 0) await byText.hover().catch(() => null);
-  } else {
-    await menuItem.hover().catch(() => null);
-  }
+  const menuItem = page.locator(`#adminmenu a[href*='post_type=${cptSlug}']`).first();
+  const byText = page.locator("#adminmenu a").filter({ hasText: /actualit/i }).first();
+  if ((await menuItem.count()) > 0) await menuItem.hover().catch(() => null);
+  else if ((await byText.count()) > 0) await byText.hover().catch(() => null);
 
-  const addLink = page
-    .locator(`#adminmenu a[href*='post-new.php?post_type=${cptSlug}']`)
-    .first();
+  const addLink = page.locator(`#adminmenu a[href*='post-new.php?post_type=${cptSlug}']`).first();
   if ((await addLink.count()) > 0) {
+    console.log("[actor] Clic menu: Actualités → Ajouter un article");
     await Promise.all([
-      page.waitForLoadState("domcontentloaded"),
+      page.waitForLoadState("domcontentloaded", { timeout: 60_000 }).catch(() => null),
       addLink.click({ timeout: 10_000 }),
     ]).catch(() => null);
+    try {
+      await page.waitForSelector("form#post input[name='post_title'], input[placeholder*='titre' i]", { timeout: 12_000 });
+      return;
+    } catch {
+      console.warn("[actor] Le clic menu n'a pas affiché le formulaire, fallback URL directe");
+    }
   } else {
-    // Dernier recours: relancer la navigation directe
-    await page.goto(directUrl, { waitUntil: "domcontentloaded", timeout: 60_000 });
+    console.warn("[actor] Lien 'Ajouter un article' introuvable dans le menu, fallback URL directe");
   }
+
+  console.log(`[actor] Ouverture directe fallback: ${directUrl}`);
+  await page.goto(directUrl, { waitUntil: "domcontentloaded", timeout: 60_000 });
 }
 
 async function dumpPageDiagnostics(page: Page): Promise<void> {
