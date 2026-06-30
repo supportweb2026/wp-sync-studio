@@ -181,14 +181,18 @@ function ArticlesPage() {
             disabled={!status.data?.ready || mut.isPending}
             onClick={() => mut.mutate([row.original.id])}
           >
-            <Cloud className="size-3.5 mr-1" />
-            Publier sur B
+            {pendingIds.has(row.original.id) ? (
+              <Loader2 className="size-3.5 mr-1 animate-spin" />
+            ) : (
+              <Cloud className="size-3.5 mr-1" />
+            )}
+            {pendingIds.has(row.original.id) ? "Envoi…" : "Publier sur B"}
           </Button>
         </div>
       ),
       enableSorting: false,
     },
-  ], [mut, status.data]);
+  ], [mut, status.data, pendingIds]);
 
   const table = useReactTable({
     data: filteredRows,
