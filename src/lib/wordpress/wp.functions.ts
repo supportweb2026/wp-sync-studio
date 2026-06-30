@@ -169,7 +169,7 @@ export const saveConnection = createServerFn({ method: "POST" })
         siteUrl: data.credentials.siteUrl,
         username: data.credentials.username,
         password: appPassword,
-        loginPath: data.credentials.loginPath ?? "/wp-admin",
+        loginPath: data.credentials.loginPath ?? "",
       });
     }
 
