@@ -1,36 +1,34 @@
-## Problème identifié
+Objectif : faire en sorte que l’Actor Apify démarre toujours avec des logs exploitables, puis publie réellement l’article Site A vers Site B.
 
-Le log Apify s’arrête à `Début du conteneur` / `LIMITED_PERMISSIONS`, sans atteindre les logs `[actor]`. Cela indique très probablement que l’Actor plante au démarrage Node/TypeScript, avant même la connexion WordPress.
+Plan d’implémentation ciblé :
 
-La cause la plus probable dans le code actuel est la configuration de build de l’Actor :
+1. Remplacer le démarrage actuel par un bootstrap minimal
+   - Créer un point d’entrée très simple qui logue immédiatement au lancement du conteneur.
+   - Charger ensuite le vrai code de publication avec un import dynamique.
+   - Résultat : si `apify`, `playwright`, TypeScript/ESM ou un import interne plante, l’erreur sera capturée et visible dans Apify au lieu de s’arrêter à `LIMITED_PERMISSIONS`.
 
-- `package.json` lance en dev `node --import tsx/esm src/main.ts`
-- mais le Dockerfile compile avec `tsc`, puis exécute `node dist/main.js`
-- `tsconfig.json` utilise `moduleResolution: "Bundler"` avec `module: "ES2022"`
-- les imports TypeScript utilisent déjà des extensions `.js`, donc il faut une config Node ESM compatible Apify/Node, pas une résolution Bundler
+2. Séparer le code principal de l’Actor
+   - Déplacer la logique actuelle de `main.ts` dans un module interne dédié.
+   - Garder `main.ts` comme bootstrap robuste.
+   - Cela évite qu’un import statique plante avant le premier `console.log`.
 
-## Plan de correction
+3. Durcir le Dockerfile Apify
+   - Vérifier pendant le build que les fichiers compilés existent bien dans `dist`.
+   - Exécuter explicitement `node ./dist/main.js`.
+   - Ajouter un `npm prune --omit=dev` après build pour garder l’image propre mais conserver les dépendances runtime nécessaires.
 
-1. Corriger la compilation Node ESM de l’Actor
-   - Passer `tsconfig.json` sur une résolution Node moderne compatible runtime : `module: "NodeNext"` et `moduleResolution: "NodeNext"`.
-   - Garder la sortie `dist/main.js`, utilisée par le Dockerfile.
+4. Corriger la configuration Apify si nécessaire
+   - Vérifier que le Dockerfile est bien référencé depuis `.actor/actor.json`.
+   - Garder une image Apify Playwright compatible Node 20.
 
-2. Simplifier le script de démarrage local de l’Actor
-   - Remplacer `node --import tsx/esm src/main.ts` par une commande plus standard compatible ESM/tsx.
-   - Conserver `npm run build` pour la compilation Docker.
+5. Vérifier avant de te redemander `apify push`
+   - Compiler uniquement le sous-projet `apify-actor`.
+   - Confirmer que le build produit bien `dist/main.js` et le module interne.
+   - Ensuite seulement, tu devras refaire :
 
-3. Ajouter des logs de démarrage très précoces
-   - Loguer immédiatement que l’Actor démarre, que l’input est lu, puis que le navigateur est lancé.
-   - Ainsi, si Apify échoue encore, le journal dira précisément si le crash arrive avant input, avant Playwright, au login, ou à la publication.
+```bash
+cd apify-actor
+apify push
+```
 
-4. Rendre le lancement navigateur plus compatible avec l’image Apify
-   - Utiliser le navigateur fourni par l’image Playwright/Apify, avec options sûres pour conteneur.
-   - Éviter que le crash soit causé par Chromium au lancement.
-
-5. Vérifier le typage localement sans publier
-   - Exécuter uniquement la vérification/compilation de l’Actor après modification.
-   - Si ça compile, il faudra ensuite redéployer l’Actor avec `apify push` pour que `sodepsi/wp-sync-studio` utilise la version corrigée.
-
-## Résultat attendu
-
-Après redéploiement de l’Actor, le run Apify ne doit plus échouer silencieusement au démarrage. S’il échoue encore côté WordPress/Sucuri/login/upload, le journal affichera enfin l’étape exacte et l’erreur exploitable.
+Après ça, si le problème vient encore de WordPress/Sucuri/login/upload, le journal affichera enfin l’étape exacte. Mais le blocage silencieux à `LIMITED_PERMISSIONS` sera éliminé.
