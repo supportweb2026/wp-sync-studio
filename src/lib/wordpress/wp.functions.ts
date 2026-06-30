@@ -190,8 +190,17 @@ export const fetchComparison = createServerFn({ method: "GET" })
       loadAuthForRole(context.supabase, context.userId, "destination"),
     ]);
     if (!src || !dst) {
-      throw new Error("Configurez les deux connexions");
+      return {
+        notConfigured: true as const,
+        rows: [],
+        sourceTotal: 0,
+        destinationTotal: 0,
+        users: [],
+        categories: [],
+        tags: [],
+      };
     }
+
     const { listAllPosts } = await import(
       "@/services/wordpress/posts.server"
     );
