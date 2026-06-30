@@ -1,35 +1,23 @@
 ## Problème
-Le build Apify échoue maintenant avec une erreur de validation du schéma d’input :
 
-```text
-.apify-actor Field schema.properties.mode.description is required
-```
+Le build Apify échoue à l'étape `npm run build` avec `sh: 1: tsc: not found`.
 
-Le champ `mode` dans `apify-actor/.actor/input_schema.json` n’a pas de propriété `description`.
+La cause : l'image de base `apify/actor-node-playwright-chrome:20` définit `NODE_ENV=production`, donc `npm install` ignore les `devDependencies` (où se trouve `typescript`). Résultat : `tsc` n'est jamais installé, le build TypeScript plante.
 
-## Plan
-1. Ajouter `"description"` au champ `mode` (et aux autres champs pour éviter d’éventuelles erreurs similaires).
-2. Vérifier que le JSON reste valide.
-3. Demander à l’utilisateur de relancer le build Apify.
+## Correction
 
-## Fichier modifié
-- `apify-actor/.actor/input_schema.json`
+Deux petites modifications dans `apify-actor/` :
 
-## Détail de la modification
-Le champ `mode` deviendra :
+1. **`apify-actor/package.json`** — déplacer `typescript` (et `tsx` si conservé) de `devDependencies` vers `dependencies`, pour qu'ils soient toujours installés même en mode production.
 
-```json
-"mode": {
-  "title": "Mode",
-  "description": "Run mode: publish an article or just check the WordPress login",
-  "type": "string",
-  "editor": "select",
-  "enum": ["publish", "login-check"],
-  "default": "publish"
-}
-```
+2. **`apify-actor/.actor/Dockerfile`** — remplacer `npm install` par `npm ci --include=dev` (ou `npm install --include=dev`) avant le build, puis garder le `npm prune --omit=dev` final pour alléger l'image runtime. Cela garantit que `tsc` existe au moment du build, puis disparaît du conteneur final.
 
-Les autres champs recevront également une description pour anticiper les règles de validation Apify.
+## Vérification
 
-## Après modification
-Relancer le build depuis Apify (ou refaire `apify push` si tu déploies via CLI) pour confirmer que l’erreur de schéma disparaît.
+Après ces deux changements, faire un nouveau build sur Apify (auto-déclenché par le push GitHub). Les logs doivent montrer :
+- `npm ci` qui installe `typescript`
+- `tsc -p tsconfig.json` qui réussit
+- `ls -la dist` qui liste `main.js` et `actor.js`
+- Build terminé sans erreur
+
+Ensuite, lancer un run `mode=login-check` pour vérifier que l'Actor démarre vraiment cette fois.
