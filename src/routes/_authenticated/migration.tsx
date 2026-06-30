@@ -3,6 +3,7 @@ import { useEffect, useState } from "react";
 import { useServerFn } from "@tanstack/react-start";
 import { useMutation } from "@tanstack/react-query";
 import { runMigrationFn } from "@/lib/wordpress/wp.functions";
+import { runSiteBApifyBatch } from "@/lib/site-b/apify-batch.functions";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
@@ -16,10 +17,11 @@ import {
 } from "@/components/ui/select";
 import { Progress } from "@/components/ui/progress";
 import { Badge } from "@/components/ui/badge";
-import { Rocket, ScrollText, CheckCircle2, XCircle } from "lucide-react";
+import { Rocket, ScrollText, CheckCircle2, XCircle, Cloud } from "lucide-react";
 import { toast } from "sonner";
 import type { LogEntry } from "@/services/migration/pipeline.server";
 import type { MigrationReportItem } from "@/schemas/wordpress";
+
 
 export const Route = createFileRoute("/_authenticated/migration")({
   head: () => ({ meta: [{ title: "Migration — WP Sync Manager" }] }),
@@ -122,10 +124,12 @@ function MigrationPage() {
               onClick={() => mut.mutate()}
             >
               <Rocket className="size-4 mr-2" />
-              {inProgress ? "Migration en cours…" : `Lancer la migration (${postIds.length})`}
+              {inProgress ? "Migration en cours…" : `Lancer via REST (${postIds.length})`}
             </Button>
+            <ApifyButton postIds={postIds} duplicateStrategy={duplicateStrategy} />
           </CardContent>
         </Card>
+
 
         <Card>
           <CardHeader>
