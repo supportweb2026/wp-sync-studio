@@ -1,29 +1,36 @@
-Je vais corriger le flux de publication pour récupérer et traiter la vraie erreur Apify, puis rendre l’Actor plus robuste côté WordPress.
+## Problème identifié
 
-Plan :
+Le log Apify s’arrête à `Début du conteneur` / `LIMITED_PERMISSIONS`, sans atteindre les logs `[actor]`. Cela indique très probablement que l’Actor plante au démarrage Node/TypeScript, avant même la connexion WordPress.
 
-1. Remplacer l’appel Apify synchrone trop opaque
-   - Ne plus dépendre uniquement de `run-sync-get-dataset-items`, qui renvoie parfois seulement `run-failed`.
-   - Lancer le run Apify, attendre sa fin, puis lire explicitement :
-     - le statut du run,
-     - les items du dataset,
-     - l’ID du run,
-     - l’erreur détaillée quand le run échoue.
-   - Enregistrer cette erreur détaillée dans le journal Site B.
+La cause la plus probable dans le code actuel est la configuration de build de l’Actor :
 
-2. Corriger les causes probables dans l’Actor WordPress
-   - Rendre le clic Publier/Mettre à jour plus tolérant pour Gutenberg et l’éditeur classique.
-   - Ajouter une attente claire après sauvegarde/publication.
-   - Si l’image à la une échoue, continuer la publication mais journaliser l’avertissement au lieu de faire échouer tout l’article.
-   - Améliorer les messages d’erreur : étape de login, recherche de doublon, création, upload image, publication.
+- `package.json` lance en dev `node --import tsx/esm src/main.ts`
+- mais le Dockerfile compile avec `tsc`, puis exécute `node dist/main.js`
+- `tsconfig.json` utilise `moduleResolution: "Bundler"` avec `module: "ES2022"`
+- les imports TypeScript utilisent déjà des extensions `.js`, donc il faut une config Node ESM compatible Apify/Node, pas une résolution Bundler
 
-3. Améliorer le journal Site B pour l’action en cours
-   - Dès qu’un article est envoyé, créer une ligne `running` avec le run Apify dès qu’il est connu.
-   - Continuer le rafraîchissement automatique jusqu’au statut final.
-   - Afficher le lien direct vers le run Apify et l’erreur réellement exploitable.
+## Plan de correction
 
-4. Vérification
-   - Vérifier le typage TypeScript.
-   - Vérifier que le bouton de publication crée bien une ligne de journal et que les échecs contiennent une cause lisible.
+1. Corriger la compilation Node ESM de l’Actor
+   - Passer `tsconfig.json` sur une résolution Node moderne compatible runtime : `module: "NodeNext"` et `moduleResolution: "NodeNext"`.
+   - Garder la sortie `dist/main.js`, utilisée par le Dockerfile.
 
-Important : après correction du code de l’Actor, il faudra redéployer l’Actor avec `apify push`, sinon Apify continuera d’exécuter l’ancienne version.
+2. Simplifier le script de démarrage local de l’Actor
+   - Remplacer `node --import tsx/esm src/main.ts` par une commande plus standard compatible ESM/tsx.
+   - Conserver `npm run build` pour la compilation Docker.
+
+3. Ajouter des logs de démarrage très précoces
+   - Loguer immédiatement que l’Actor démarre, que l’input est lu, puis que le navigateur est lancé.
+   - Ainsi, si Apify échoue encore, le journal dira précisément si le crash arrive avant input, avant Playwright, au login, ou à la publication.
+
+4. Rendre le lancement navigateur plus compatible avec l’image Apify
+   - Utiliser le navigateur fourni par l’image Playwright/Apify, avec options sûres pour conteneur.
+   - Éviter que le crash soit causé par Chromium au lancement.
+
+5. Vérifier le typage localement sans publier
+   - Exécuter uniquement la vérification/compilation de l’Actor après modification.
+   - Si ça compile, il faudra ensuite redéployer l’Actor avec `apify push` pour que `sodepsi/wp-sync-studio` utilise la version corrigée.
+
+## Résultat attendu
+
+Après redéploiement de l’Actor, le run Apify ne doit plus échouer silencieusement au démarrage. S’il échoue encore côté WordPress/Sucuri/login/upload, le journal affichera enfin l’étape exacte et l’erreur exploitable.

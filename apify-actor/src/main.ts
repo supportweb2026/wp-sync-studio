@@ -1,7 +1,8 @@
 import { Actor } from "apify";
-import { chromium, type Page } from "playwright";
+import { chromium, type Browser, type BrowserContext, type Page } from "playwright";
 import type {
   ActorInput,
+  ActorMode,
   ActorOutput,
   ActorLoginCheckOutput,
 } from "./types.js";
@@ -9,33 +10,48 @@ import { login } from "./login.js";
 import { findBySlug } from "./findBySlug.js";
 import { createOrUpdatePost } from "./createPost.js";
 
-await Actor.init();
+console.log("[actor] Démarrage du module wp-site-b-publisher");
 
-const input = (await Actor.getInput<ActorInput>()) ?? null;
-if (!input) {
-  await Actor.pushData({ ok: false, error: "Input manquant" });
-  await Actor.exit();
-}
-
-const cfg = input as ActorInput;
-const mode = cfg.mode ?? "publish";
-const loginPath = cfg.loginPath ?? "/wp-admin";
-let cptSlug = cfg.cptSlug ?? "actualite";
-const dupStrategy = cfg.duplicateStrategy ?? "skip";
-
-const browser = await chromium.launch({ headless: true });
-const context = await browser.newContext({
-  userAgent:
-    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0 Safari/537.36",
-  viewport: { width: 1366, height: 900 },
-});
-const page = await context.newPage();
-page.setDefaultTimeout(30_000);
-page.setDefaultNavigationTimeout(60_000);
-
+let actorInitialized = false;
+let browser: Browser | null = null;
+let context: BrowserContext | null = null;
+let page: Page | null = null;
 let output: ActorOutput = { ok: false, error: "unknown" } as ActorOutput;
 let stage = "initialisation";
+let mode: ActorMode = "publish";
+
 try {
+  console.log("[actor] Initialisation Apify");
+  await Actor.init();
+  actorInitialized = true;
+
+  stage = "lecture de l'input Apify";
+  const input = (await Actor.getInput<ActorInput>()) ?? null;
+  if (!input) throw new Error("Input manquant");
+
+  const cfg = input;
+  mode = cfg.mode ?? "publish";
+  const loginPath = cfg.loginPath ?? "/wp-admin";
+  let cptSlug = cfg.cptSlug ?? "actualite";
+  const dupStrategy = cfg.duplicateStrategy ?? "skip";
+  console.log(`[actor] Input chargé: mode=${mode}, site=${cfg.siteUrl}, cpt=${cptSlug}`);
+
+  stage = "lancement du navigateur Playwright";
+  browser = await chromium.launch({
+    headless: true,
+    args: ["--no-sandbox", "--disable-dev-shm-usage"],
+  });
+  console.log("[actor] Navigateur Playwright lancé");
+
+  context = await browser.newContext({
+    userAgent:
+      "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0 Safari/537.36",
+    viewport: { width: 1366, height: 900 },
+  });
+  page = await context.newPage();
+  page.setDefaultTimeout(30_000);
+  page.setDefaultNavigationTimeout(60_000);
+
   stage = "connexion au back-office WordPress";
   await login(page, cfg.siteUrl, loginPath, cfg.username, cfg.password);
   cptSlug = await resolveActualitesPostType(page, cptSlug);
@@ -71,10 +87,12 @@ try {
   const message = `Étape "${stage}" échouée: ${rawMessage}`;
   console.error("[actor]", message);
   try {
-    const buf = await page.screenshot({ fullPage: true });
-    await Actor.setValue("error-screenshot.png", buf, { contentType: "image/png" });
-    const html = await page.content();
-    await Actor.setValue("error-page.html", html, { contentType: "text/html" });
+    if (page && actorInitialized) {
+      const buf = await page.screenshot({ fullPage: true });
+      await Actor.setValue("error-screenshot.png", buf, { contentType: "image/png" });
+      const html = await page.content();
+      await Actor.setValue("error-page.html", html, { contentType: "text/html" });
+    }
   } catch {
     /* ignore */
   }
@@ -84,12 +102,15 @@ try {
     output = { ok: false, error: message };
   }
 } finally {
-  await context.close().catch(() => null);
-  await browser.close().catch(() => null);
+  await context?.close().catch(() => null);
+  await browser?.close().catch(() => null);
 }
 
-await Actor.pushData(output);
-await Actor.exit();
+if (actorInitialized) {
+  await Actor.pushData(output);
+  console.log("[actor] Résultat écrit dans le dataset", output.ok ? "ok" : "failed");
+  await Actor.exit();
+}
 
 async function resolveActualitesPostType(page: Page, requested: string): Promise<string> {
   const links = await page.locator("#adminmenu a[href*='post_type='], a[href*='post-new.php']").evaluateAll((anchors) =>

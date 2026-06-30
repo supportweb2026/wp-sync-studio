@@ -9,7 +9,6 @@ import { toast } from "sonner";
 import { ArrowLeftRight } from "lucide-react";
 
 export const Route = createFileRoute("/auth")({
-  ssr: false,
   head: () => ({
     meta: [
       { title: "Connexion — WordPress Sync Manager" },
