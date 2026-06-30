@@ -19,7 +19,15 @@ function PublicationsJournalPage() {
   const statusFn = useServerFn(getApifyActorStatus);
   const listFn = useServerFn(listSiteBPublications);
   const status = useQuery({ queryKey: ["apify-actor-status"], queryFn: () => statusFn() });
-  const pubs = useQuery({ queryKey: ["site-b-publications"], queryFn: () => listFn() });
+  const pubs = useQuery({
+    queryKey: ["site-b-publications"],
+    queryFn: () => listFn(),
+    refetchInterval: (q) => {
+      const list = q.state.data as Array<{ status: string }> | undefined;
+      return list?.some((p) => p.status === "running" || p.status === "pending") ? 3000 : false;
+    },
+  });
+  const running = (pubs.data ?? []).filter((p) => p.status === "running" || p.status === "pending").length;
 
   return (
     <div className="space-y-6">
