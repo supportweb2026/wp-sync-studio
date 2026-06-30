@@ -1,22 +1,33 @@
-Le problème n'est pas WordPress ni vos identifiants : l'Actor Apify démarre, mais le navigateur Playwright ne trouve pas le bon Chromium. La cause restante est le `package-lock.json` : même si `package.json` a été corrigé, le lockfile contient encore `playwright: ^1.48.0`, donc Apify continue probablement à réinstaller une version incompatible.
+## Problème
 
-Plan de correction ciblé :
+Le timeout vient du fait que l'Actor va sur `https://sobraga.com/adsobra/wp-admin` (siteUrl + loginPath par défaut `/wp-admin`). Ce n'est pas l'URL de login réelle : le vrai écran de connexion est directement `https://sobraga.com/adsobra`. Résultat : Sucuri/WP ne montre jamais `#user_login`, Playwright attend dans le vide → timeout 30 s.
 
-1. Corriger le lockfile Apify
-   - Mettre `apify-actor/package-lock.json` en cohérence avec `apify-actor/package.json`.
-   - Supprimer toute dépendance directe à `playwright` dans la racine du lockfile.
-   - Garder seulement `apify`, `typescript` et les dépendances nécessaires au build.
+## Correctifs
 
-2. Ne plus dépendre du Chromium Playwright téléchargé
-   - Modifier le lancement navigateur dans `apify-actor/src/actor.ts` pour utiliser explicitement le Chrome fourni par l'image Apify : `/usr/bin/google-chrome` via `APIFY_CHROME_EXECUTABLE_PATH`.
-   - Cela évite définitivement l'erreur `/pw-browsers/chromium_headless_shell-1228/... Executable doesn't exist`.
+1. **Connexions Site B (`/connections`)** : faire de "Chemin de connexion" un champ optionnel (placeholder `/wp-login.php` ou vide) avec une aide expliquant « URL exacte où apparaît le formulaire WordPress. Laissez vide si c'est déjà `siteUrl`. »
+2. **`saveConnection` + schéma** : accepter `loginPath` vide, ne pas re-forcer `/wp-admin`.
+3. **Actor `login.ts`** :
+   - Construire l'URL cible :
+     - si `loginPath` vide ou `/` → aller sur `siteUrl` tel quel
+     - sinon concaténer proprement
+   - Augmenter le timeout de `waitForSelector` à 60 s et attendre `#user_login, #user_pass, #wpadminbar, form#loginform`
+   - Si on tombe sur une page Sucuri (`#sucuri-cloudproxy-firewall`, `Access Denied`, `Sucuri WebSite Firewall`), lever une erreur explicite « Sucuri bloque l'accès — vérifiez l'IP autorisée / l'URL de login »
+   - Garder le screenshot d'erreur (déjà fait) pour diagnostic dans la KV store Apify
+4. **UI `/migration`** : afficher un lien direct vers le screenshot `error-screenshot.png` du run (clé KV) en cas d'échec, pour que vous voyiez ce que voit le navigateur.
+5. **Valeur par défaut côté Actor** : si `loginPath` absent, ne plus mettre `/wp-admin` — utiliser `""` (= siteUrl direct).
 
-3. Rendre l'erreur de build/run plus lisible
-   - Ajouter un log au démarrage indiquant le chemin navigateur utilisé.
-   - Si Chrome est absent, l'Actor échouera avec un message clair au lieu d'une erreur Playwright confuse.
+## Côté vous, après build
 
-4. Étapes après implémentation
-   - Vous devrez seulement pousser les changements sur GitHub pour relancer le build Apify.
-   - Puis tester depuis l'app avec “Tester la connexion” ou publier un article.
+1. Aller dans `/connections` → Site B → mettre **Chemin de connexion = vide** (ou `/wp-login.php` si jamais le formulaire n'est pas sur la home `/adsobra`).
+2. Relancer un test ; si ça échoue encore, ouvrir le run Apify → onglet *Storage / Key-value store* → `error-screenshot.png` pour voir la page réelle (Sucuri challenge, 404, etc.).
 
-Ce plan est volontairement minimal : pas de refonte, pas de changement UI, pas de nouvelle fonctionnalité — uniquement la correction de l'erreur Apify actuelle.
+## Détails techniques
+
+Fichiers touchés :
+- `apify-actor/src/login.ts` — nouvelle construction d'URL + timeout 60 s + détection Sucuri
+- `apify-actor/src/actor.ts` — défaut `loginPath = ""` au lieu de `/wp-admin`
+- `apify-actor/.actor/input_schema.json` — `default` de `loginPath` retiré (ou `""`)
+- `src/schemas/wordpress.ts` — `loginPath` optionnel sans default `/wp-admin`
+- `src/routes/_authenticated/connections.tsx` — placeholder + helper text
+- `src/routes/_authenticated/migration.tsx` — lien vers le screenshot d'erreur du run
+- `src/lib/site-b/apify.functions.ts` — exposer `errorScreenshotUrl` (KV record URL) dans le résultat
