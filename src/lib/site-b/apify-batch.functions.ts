@@ -3,9 +3,7 @@ import { z } from "zod";
 import { requireSupabaseAuth } from "@/integrations/supabase/auth-middleware";
 
 const input = z.object({
-  // Si postIds vide, scope="missing" publie tous les articles only_on_source.
-  postIds: z.array(z.number()).max(500).default([]),
-  scope: z.enum(["selection", "missing"]).default("selection"),
+  postIds: z.array(z.number()).min(1).max(500),
   duplicateStrategy: z.enum(["skip", "overwrite", "copy"]).default("skip"),
 });
 
@@ -42,42 +40,23 @@ export const runSiteBApifyBatch = createServerFn({ method: "POST" })
       appPassword: await decryptSecret(src.app_password_encrypted),
     };
     const { listAllPosts } = await import("@/services/wordpress/posts.server");
+    const { getMedia } = await import("@/services/wordpress/media.server");
     const all = await listAllPosts(auth);
-
-    let selected = all;
-    if (data.scope === "selection") {
-      if (data.postIds.length === 0) {
-        throw new Error("Aucun article sélectionné");
-      }
-      selected = all.filter((p) => data.postIds.includes(p.id));
-    } else {
-      // scope=missing : on calcule les manquants via le matcher
-      const { runApifyListPosts } = await import("@/lib/site-b/apify-internal.server");
-      const { data: destRow } = await context.supabase
-        .from("wp_connections")
-        .select("site_url,username,app_password_encrypted,last_capabilities")
-        .eq("user_id", context.userId)
-        .eq("role", "destination")
-        .maybeSingle();
-      if (!destRow) throw new Error("Connexion Site B introuvable");
-      const dst = destRow as { site_url: string; username: string; app_password_encrypted: string; last_capabilities: { loginPath?: string } | null };
-      const destList = await runApifyListPosts({
-        siteUrl: dst.site_url,
-        username: dst.username,
-        password: await decryptSecret(dst.app_password_encrypted),
-        loginPath: dst.last_capabilities?.loginPath ?? "/wp-admin",
-      });
-      const existingSlugs = new Set(destList.posts.map((p) => p.slug));
-      selected = all.filter((p) => !existingSlugs.has(p.slug));
-    }
+    const selected = all.filter((p) => data.postIds.includes(p.id));
+    if (selected.length === 0) throw new Error("Aucun article sélectionné trouvé sur Site A");
 
     const { publishToSiteB } = await import("@/lib/site-b/apify.functions");
     const results: ApifyBatchItemResult[] = [];
 
-    // Chunking séquentiel pour rester sous les limites Apify
     for (let i = 0; i < selected.length; i += CHUNK_SIZE) {
       const chunk = selected.slice(i, i + CHUNK_SIZE);
       for (const post of chunk) {
+        // Résolution image à la une → URL publique pour l'Actor Apify
+        let featuredImageUrl: string | undefined;
+        if (post.featured_media) {
+          const media = await getMedia(auth, post.featured_media);
+          if (media?.source_url) featuredImageUrl = media.source_url;
+        }
         const res = await publishToSiteB({
           data: {
             title: post.title.rendered,
@@ -85,6 +64,7 @@ export const runSiteBApifyBatch = createServerFn({ method: "POST" })
             content: post.content.rendered,
             excerpt: post.excerpt.rendered,
             date: post.date,
+            featuredImageUrl,
             duplicateStrategy: data.duplicateStrategy,
             sourcePostId: post.id,
           },
