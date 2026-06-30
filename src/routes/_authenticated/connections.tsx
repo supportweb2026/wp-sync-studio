@@ -218,8 +218,11 @@ function DestinationForm({ current }: { current?: PublicConnection }) {
               />
             </Field>
           </div>
-          <Field label="Chemin de connexion">
-            <Input value={loginPath} onChange={(e) => setLoginPath(e.target.value)} placeholder="/wp-admin" />
+          <Field label="Chemin de connexion (optionnel)">
+            <Input value={loginPath} onChange={(e) => setLoginPath(e.target.value)} placeholder="(vide) — ou /wp-login.php, /wp-admin" />
+            <p className="text-xs text-muted-foreground">
+              URL exacte où s'affiche le formulaire WordPress. Laissez vide si le login apparaît directement sur l'URL du site.
+            </p>
           </Field>
           <Actions
             saving={saveMut.isPending}
