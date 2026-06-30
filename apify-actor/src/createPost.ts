@@ -110,7 +110,20 @@ async function fillTitle(page: Page, title: string): Promise<void> {
   throw new Error("Champ titre introuvable");
 }
 
-async function fillContent(page: Page, content: string): Promise<void> {
+function stripWpBakeryShortcodes(html: string): string {
+  const re = /\[\/?(vc_|wpb_)[^\]]*\]/gi;
+  const matches = html.match(re);
+  const count = matches ? matches.length : 0;
+  const cleaned = html
+    .replace(re, "")
+    .replace(/\n{3,}/g, "\n\n")
+    .trim();
+  if (count > 0) console.log(`[actor] Shortcodes WPBakery supprimés (${count} occurrences)`);
+  return cleaned;
+}
+
+async function fillContent(page: Page, rawContent: string): Promise<void> {
+  const content = stripWpBakeryShortcodes(rawContent);
   // Le contenu Site A est du HTML brut. On bascule sur l'onglet "Code"
   // (mode Texte) et on colle dans textarea#content tel quel, pour que
   // WordPress enregistre le HTML sans le re-encoder via TinyMCE/Visuel.
