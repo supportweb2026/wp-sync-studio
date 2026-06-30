@@ -144,17 +144,24 @@ export const getApifyActorStatus = createServerFn({ method: "GET" })
     const actorId = process.env.APIFY_ACTOR_ID;
     const token = process.env.APIFY_API_TOKEN;
     if (!actorId) {
-      return { ready: false, actorId: null, message: "Actor Apify non configuré : ajoutez le secret APIFY_ACTOR_ID après avoir fait apify push." };
+      return { ready: false, actorId: null, source: "none" as const, message: "Actor Apify non configuré : ajoutez le secret APIFY_ACTOR_ID après avoir fait apify push." };
     }
     if (!token) {
-      return { ready: false, actorId, message: "Token Apify manquant (APIFY_API_TOKEN)." };
+      return { ready: false, actorId, source: "none" as const, message: "Token Apify manquant (APIFY_API_TOKEN)." };
     }
     const dest = await loadDestAuthFromDb(context.supabase, context.userId);
-    if (!dest) {
-      return { ready: false, actorId, message: "Connexion Site B non configurée (Connexions → Site B)." };
+    if (dest) {
+      return { ready: true, actorId, source: "db" as const, message: "Prêt à publier (connexion utilisateur)." };
     }
-    return { ready: true, actorId, message: "Prêt à publier." };
+    const envSiteUrl = process.env.SITE_B_URL;
+    const envUser = process.env.SITE_B_USERNAME;
+    const envPass = process.env.SITE_B_PASSWORD;
+    if (envSiteUrl && envUser && envPass) {
+      return { ready: true, actorId, source: "env" as const, message: "Prêt à publier (secrets globaux). Pour le multi-utilisateur, sauvegardez Site B dans Connexions." };
+    }
+    return { ready: false, actorId, source: "none" as const, message: "Connexion Site B non configurée (Connexions → Site B)." };
   });
+
 
 export const listSiteBPublications = createServerFn({ method: "GET" })
   .middleware([requireSupabaseAuth])
