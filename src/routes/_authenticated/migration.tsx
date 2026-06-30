@@ -186,6 +186,74 @@ function OptionRow({ checked, onChange, label }: { checked: boolean; onChange: (
   );
 }
 
+function ApifyButton({
+  postIds,
+  duplicateStrategy,
+}: {
+  postIds: number[];
+  duplicateStrategy: "skip" | "overwrite" | "copy";
+}) {
+  const run = useServerFn(runSiteBApifyBatch);
+  const mut = useMutation({
+    mutationFn: () => run({ data: { postIds, duplicateStrategy } }),
+    onSuccess: (res) => toast.success(`Apify: ${res.succeeded}/${res.total} publiés`),
+    onError: (e) => toast.error(e instanceof Error ? e.message : "Erreur Apify"),
+  });
+  return (
+    <div className="space-y-2">
+      <Button
+        variant="outline"
+        size="lg"
+        className="w-full"
+        disabled={postIds.length === 0 || mut.isPending}
+        onClick={() => mut.mutate()}
+      >
+        <Cloud className="size-4 mr-2" />
+        {mut.isPending ? "Apify en cours…" : `Publier sur Site B via Apify (${postIds.length})`}
+      </Button>
+      {mut.data && (
+        <div className="rounded-md border border-border max-h-48 overflow-auto text-xs">
+          <table className="w-full">
+            <thead className="bg-muted/40 sticky top-0">
+              <tr>
+                <th className="text-left p-2">Slug</th>
+                <th className="text-left p-2">État</th>
+                <th className="text-left p-2">URL</th>
+                <th className="text-left p-2">Run</th>
+              </tr>
+            </thead>
+            <tbody>
+              {mut.data.results.map((r) => (
+                <tr key={r.sourceId} className="border-t border-border">
+                  <td className="p-2 font-mono">{r.slug}</td>
+                  <td className="p-2">
+                    {r.ok ? (
+                      <span style={{ color: "var(--success)" }}>{r.skipped ? "↷" : "✓"}</span>
+                    ) : (
+                      <span className="text-destructive" title={r.error ?? ""}>✗</span>
+                    )}
+                  </td>
+                  <td className="p-2 text-muted-foreground truncate max-w-[180px]">
+                    {r.postUrl ? (
+                      <a href={r.postUrl} target="_blank" rel="noreferrer" className="text-primary">
+                        {r.postUrl}
+                      </a>
+                    ) : (
+                      "—"
+                    )}
+                  </td>
+                  <td className="p-2 font-mono text-muted-foreground">{r.runId ?? "—"}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </div>
+  );
+}
+
+
 function ReportList({ report }: { report: MigrationReportItem[] }) {
   return (
     <div className="rounded-md border border-border max-h-72 overflow-auto">
