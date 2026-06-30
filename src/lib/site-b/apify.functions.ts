@@ -1,6 +1,7 @@
 import { createServerFn } from "@tanstack/react-start";
 import { z } from "zod";
 import { requireSupabaseAuth } from "@/integrations/supabase/auth-middleware";
+import { loadDestAuthFromDb } from "@/lib/site-b/apify-internal.server";
 
 const articleInput = z.object({
   title: z.string().min(1),
@@ -39,18 +40,25 @@ export const publishToSiteB = createServerFn({ method: "POST" })
   .handler(async ({ data, context }): Promise<ApifyPublishResult> => {
     const token = process.env.APIFY_API_TOKEN;
     const actorId = process.env.APIFY_ACTOR_ID;
-    const siteUrl = process.env.SITE_B_URL;
-    const username = process.env.SITE_B_USERNAME;
-    const password = process.env.SITE_B_PASSWORD;
     if (!token) throw new Error("APIFY_API_TOKEN manquant");
     if (!actorId) throw new Error("APIFY_ACTOR_ID manquant (déployez l'Actor puis ajoutez le secret)");
-    if (!siteUrl || !username || !password) throw new Error("Identifiants Site B manquants");
+
+    // Charge les creds Site B depuis la connexion de l'utilisateur (fallback env)
+    const dest = await loadDestAuthFromDb(context.supabase, context.userId);
+    const siteUrl = dest?.siteUrl ?? process.env.SITE_B_URL;
+    const username = dest?.username ?? process.env.SITE_B_USERNAME;
+    const password = dest?.password ?? process.env.SITE_B_PASSWORD;
+    const loginPath = dest?.loginPath ?? process.env.SITE_B_LOGIN_PATH ?? "/wp-admin";
+    if (!siteUrl || !username || !password) {
+      throw new Error("Connexion Site B introuvable (configurez-la dans Connexions)");
+    }
 
     const input = {
+      mode: "publish",
       siteUrl,
       username,
       password,
-      loginPath: process.env.SITE_B_LOGIN_PATH ?? "/wp-admin",
+      loginPath,
       cptSlug: process.env.SITE_B_CPT_SLUG ?? "actualite",
       duplicateStrategy: data.duplicateStrategy,
       article: {
@@ -64,7 +72,6 @@ export const publishToSiteB = createServerFn({ method: "POST" })
       },
     };
 
-    // Insert pending row
     const { data: pubRow } = await context.supabase
       .from("site_b_publications")
       .insert({
@@ -133,21 +140,18 @@ export const publishToSiteB = createServerFn({ method: "POST" })
 
 export const getApifyActorStatus = createServerFn({ method: "GET" })
   .middleware([requireSupabaseAuth])
-  .handler(async () => {
+  .handler(async ({ context }) => {
     const actorId = process.env.APIFY_ACTOR_ID;
     const token = process.env.APIFY_API_TOKEN;
-    const siteUrl = process.env.SITE_B_URL;
-    const username = process.env.SITE_B_USERNAME;
-    const password = process.env.SITE_B_PASSWORD;
-
     if (!actorId) {
       return { ready: false, actorId: null, message: "Actor Apify non configuré : ajoutez le secret APIFY_ACTOR_ID après avoir fait apify push." };
     }
     if (!token) {
       return { ready: false, actorId, message: "Token Apify manquant (APIFY_API_TOKEN)." };
     }
-    if (!siteUrl || !username || !password) {
-      return { ready: false, actorId, message: "Identifiants Site B incomplets (SITE_B_URL, SITE_B_USERNAME, SITE_B_PASSWORD)." };
+    const dest = await loadDestAuthFromDb(context.supabase, context.userId);
+    if (!dest) {
+      return { ready: false, actorId, message: "Connexion Site B non configurée (Connexions → Site B)." };
     }
     return { ready: true, actorId, message: "Prêt à publier." };
   });

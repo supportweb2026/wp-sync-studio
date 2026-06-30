@@ -188,6 +188,9 @@ function ComparisonPage() {
     navigate({ to: "/migration" });
   }
 
+  const destSource = cmp.data && "destinationSource" in cmp.data ? cmp.data.destinationSource : "none";
+  const destError = cmp.data && "destinationError" in cmp.data ? cmp.data.destinationError : null;
+
   return (
     <div className="space-y-6">
       <header className="flex items-start justify-between gap-4 flex-wrap">
@@ -195,6 +198,12 @@ function ComparisonPage() {
           <h1 className="text-2xl font-semibold tracking-tight">Comparaison</h1>
           <p className="text-sm text-muted-foreground mt-1">
             {cmp.data ? `${cmp.data.sourceTotal} articles côté A · ${cmp.data.destinationTotal} côté B` : "Chargement…"}
+            {destSource === "cache" && (
+              <span className="ml-2 text-amber-600">(Site B lu depuis le cache local : Apify indisponible{destError ? ` — ${destError}` : ""})</span>
+            )}
+            {destSource === "none" && cmp.data && !("notConfigured" in cmp.data && cmp.data.notConfigured) && (
+              <span className="ml-2 text-amber-600">(aucune donnée Site B disponible{destError ? ` — ${destError}` : ""})</span>
+            )}
           </p>
         </div>
         <div className="flex gap-2">
@@ -208,6 +217,7 @@ function ComparisonPage() {
           </Button>
         </div>
       </header>
+
 
       <Card>
         <CardContent className="p-0">
