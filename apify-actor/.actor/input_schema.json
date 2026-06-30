@@ -32,10 +32,10 @@
     },
     "loginPath": {
       "title": "Login path",
-      "description": "Path to the WordPress login page",
+      "description": "Path to the WordPress login page (leave empty if the form is directly on siteUrl, e.g. /wp-login.php or /wp-admin)",
       "type": "string",
       "editor": "textfield",
-      "default": "/wp-admin"
+      "default": ""
     },
     "cptSlug": {
       "title": "CPT slug",
