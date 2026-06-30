@@ -169,7 +169,7 @@ export const saveConnection = createServerFn({ method: "POST" })
         siteUrl: data.credentials.siteUrl,
         username: data.credentials.username,
         password: appPassword,
-        loginPath: data.credentials.loginPath ?? "/wp-admin",
+        loginPath: data.credentials.loginPath ?? "",
       });
     }
 
@@ -233,7 +233,7 @@ export const testConnectionRole = createServerFn({ method: "POST" })
         siteUrl: auth.siteUrl,
         username: auth.username,
         password: auth.appPassword,
-        loginPath: auth.loginPath ?? "/wp-admin",
+        loginPath: auth.loginPath ?? "",
       });
     }
     await context.supabase
