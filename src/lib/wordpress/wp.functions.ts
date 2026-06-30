@@ -2,9 +2,12 @@ import { createServerFn } from "@tanstack/react-start";
 import { z } from "zod";
 import { requireSupabaseAuth } from "@/integrations/supabase/auth-middleware";
 import {
+  apifyCapabilitiesSchema,
   capabilitiesSchema,
-  credentialsSchema,
+  destinationCredentialsSchema,
   roleSchema,
+  sourceCredentialsSchema,
+  type ApifyCapabilities,
   type Capabilities,
   type Role,
   type WpPost,
@@ -15,15 +18,23 @@ export interface PublicConnection {
   role: Role;
   siteUrl: string;
   username: string;
+  loginPath: string | null;
   lastTestedAt: string | null;
-  capabilities: Capabilities | null;
+  capabilities: Capabilities | ApifyCapabilities | null;
+}
+
+interface LoadedAuth {
+  siteUrl: string;
+  username: string;
+  appPassword: string;
+  loginPath: string | null;
 }
 
 async function loadAuthForRole(
   supabase: ReturnType<typeof Object>,
   userId: string,
   role: Role,
-): Promise<{ siteUrl: string; username: string; appPassword: string } | null> {
+): Promise<LoadedAuth | null> {
   const sb = supabase as unknown as {
     from: (t: string) => {
       select: (c: string) => {
@@ -37,7 +48,7 @@ async function loadAuthForRole(
   };
   const { data, error } = await sb
     .from("wp_connections")
-    .select("site_url,username,app_password_encrypted")
+    .select("site_url,username,app_password_encrypted,last_capabilities")
     .eq("user_id", userId)
     .eq("role", role)
     .maybeSingle();
@@ -46,14 +57,18 @@ async function loadAuthForRole(
     site_url: string;
     username: string;
     app_password_encrypted: string;
+    last_capabilities: unknown;
   };
   const { decryptSecret } = await import(
     "@/services/wordpress/crypto.server"
   );
+  // loginPath éventuellement stocké dans last_capabilities.loginPath
+  const caps = row.last_capabilities as { loginPath?: string } | null;
   return {
     siteUrl: row.site_url,
     username: row.username,
     appPassword: await decryptSecret(row.app_password_encrypted),
+    loginPath: caps?.loginPath ?? null,
   };
 }
 
@@ -62,9 +77,7 @@ export const listConnections = createServerFn({ method: "GET" })
   .handler(async ({ context }) => {
     const { data, error } = await context.supabase
       .from("wp_connections")
-      .select(
-        "id,role,site_url,username,last_tested_at,last_capabilities",
-      )
+      .select("id,role,site_url,username,last_tested_at,last_capabilities")
       .eq("user_id", context.userId);
     if (error) throw new Error(error.message);
     const rows = (data ?? []) as Array<{
@@ -76,32 +89,46 @@ export const listConnections = createServerFn({ method: "GET" })
       last_capabilities: unknown;
     }>;
     const out: PublicConnection[] = rows.map((r) => {
-      const caps = capabilitiesSchema.safeParse(r.last_capabilities);
+      const apify = apifyCapabilitiesSchema.safeParse(r.last_capabilities);
+      const rest = capabilitiesSchema.safeParse(r.last_capabilities);
+      const caps = apify.success
+        ? apify.data
+        : rest.success
+          ? rest.data
+          : null;
+      const loginPath =
+        apify.success ? apify.data.loginPath : null;
       return {
         id: r.id,
         role: r.role as Role,
         siteUrl: r.site_url,
         username: r.username,
+        loginPath,
         lastTestedAt: r.last_tested_at,
-        capabilities: caps.success ? caps.data : null,
+        capabilities: caps,
       };
     });
     return out;
   });
 
-const saveInput = z.object({
-  role: roleSchema,
-  credentials: credentialsSchema,
+const saveSourceInput = z.object({
+  role: z.literal("source"),
+  credentials: sourceCredentialsSchema,
 });
+const saveDestinationInput = z.object({
+  role: z.literal("destination"),
+  credentials: destinationCredentialsSchema,
+});
+const saveInput = z.discriminatedUnion("role", [
+  saveSourceInput,
+  saveDestinationInput,
+]);
 
 export const saveConnection = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
   .inputValidator((data: unknown) => saveInput.parse(data))
   .handler(async ({ data, context }) => {
-    const { probeCapabilities } = await import(
-      "@/services/wordpress/capabilities.server"
-    );
-    const { encryptSecret, decryptSecret } = await import(
+    const { encryptSecret } = await import(
       "@/services/wordpress/crypto.server"
     );
     let appPassword = data.credentials.appPassword;
@@ -112,19 +139,42 @@ export const saveConnection = createServerFn({ method: "POST" })
         data.role,
       );
       if (!existing) {
-        throw new Error("Mot de passe d'application requis");
+        throw new Error("Mot de passe requis");
       }
       appPassword = existing.appPassword;
     }
-    if (appPassword.length < 8) {
-      throw new Error("Mot de passe d'application trop court");
+    const minLen = data.role === "source" ? 8 : 1;
+    if (appPassword.length < minLen) {
+      throw new Error(
+        data.role === "source"
+          ? "Mot de passe d'application trop court"
+          : "Mot de passe administrateur requis",
+      );
     }
-    void decryptSecret;
-    const caps = await probeCapabilities({
-      siteUrl: data.credentials.siteUrl,
-      username: data.credentials.username,
-      appPassword,
-    });
+
+    let caps: Capabilities | ApifyCapabilities;
+    if (data.role === "source") {
+      const { probeCapabilities } = await import(
+        "@/services/wordpress/capabilities.server"
+      );
+      caps = await probeCapabilities({
+        siteUrl: data.credentials.siteUrl,
+        username: data.credentials.username,
+        appPassword,
+      });
+    } else {
+      // destination → Apify login-check
+      const { runApifyLoginCheck } = await import(
+        "@/lib/site-b/apify-internal.server"
+      );
+      caps = await runApifyLoginCheck({
+        siteUrl: data.credentials.siteUrl,
+        username: data.credentials.username,
+        password: appPassword,
+        loginPath: data.credentials.loginPath ?? "/wp-admin",
+      });
+    }
+
     const encrypted = await encryptSecret(appPassword);
     const { error } = await context.supabase
       .from("wp_connections")
@@ -167,10 +217,27 @@ export const testConnectionRole = createServerFn({ method: "POST" })
       data.role,
     );
     if (!auth) throw new Error("Connexion introuvable");
-    const { probeCapabilities } = await import(
-      "@/services/wordpress/capabilities.server"
-    );
-    const caps = await probeCapabilities(auth);
+    let caps: Capabilities | ApifyCapabilities;
+    if (data.role === "source") {
+      const { probeCapabilities } = await import(
+        "@/services/wordpress/capabilities.server"
+      );
+      caps = await probeCapabilities({
+        siteUrl: auth.siteUrl,
+        username: auth.username,
+        appPassword: auth.appPassword,
+      });
+    } else {
+      const { runApifyLoginCheck } = await import(
+        "@/lib/site-b/apify-internal.server"
+      );
+      caps = await runApifyLoginCheck({
+        siteUrl: auth.siteUrl,
+        username: auth.username,
+        password: auth.appPassword,
+        loginPath: auth.loginPath ?? "/wp-admin",
+      });
+    }
     await context.supabase
       .from("wp_connections")
       .update({
@@ -192,9 +259,12 @@ export const fetchComparison = createServerFn({ method: "GET" })
     if (!src || !dst) {
       return {
         notConfigured: true as const,
+        missingSource: !src,
+        missingDestination: !dst,
         rows: [],
         sourceTotal: 0,
         destinationTotal: 0,
+        destinationSource: "none" as const,
         users: [],
         categories: [],
         tags: [],
@@ -213,86 +283,85 @@ export const fetchComparison = createServerFn({ method: "GET" })
     const { buildComparison } = await import(
       "@/services/comparison/matcher"
     );
-    const [
-      sourcePosts,
-      destinationPosts,
-      sourceUsers,
-      sourceCats,
-      sourceTags,
-    ] = await Promise.all([
-      listAllPosts(src),
-      listAllPosts(dst),
-      listAllUsers(src).catch(() => []),
-      listAllTerms(src, "categories").catch(() => []),
-      listAllTerms(src, "tags").catch(() => []),
-    ]);
+    const { runApifyListPosts } = await import(
+      "@/lib/site-b/apify-internal.server"
+    );
+
+    const destPromise = runApifyListPosts({
+      siteUrl: dst.siteUrl,
+      username: dst.username,
+      password: dst.appPassword,
+      loginPath: dst.loginPath ?? "/wp-admin",
+    }).catch((e: unknown) => ({
+      ok: false as const,
+      posts: [] as WpPost[],
+      error: e instanceof Error ? e.message : String(e),
+    }));
+
+    const [sourcePosts, sourceUsers, sourceCats, sourceTags, destResult] =
+      await Promise.all([
+        listAllPosts(src),
+        listAllUsers(src).catch(() => []),
+        listAllTerms(src, "categories").catch(() => []),
+        listAllTerms(src, "tags").catch(() => []),
+        destPromise,
+      ]);
+
+    let destinationPosts: WpPost[] = [];
+    let destinationSource: "apify" | "cache" | "none" = "none";
+    let destinationError: string | null = null;
+
+    if (destResult.ok && destResult.posts.length > 0) {
+      destinationPosts = destResult.posts;
+      destinationSource = "apify";
+    } else {
+      // Fallback : utilise les publications déjà enregistrées dans cette app
+      destinationError = destResult.ok ? null : destResult.error;
+      const { data: pubs } = await context.supabase
+        .from("site_b_publications")
+        .select("source_slug,post_id,post_url,created_at,status")
+        .eq("user_id", context.userId)
+        .eq("status", "succeeded");
+      const rows = (pubs ?? []) as Array<{
+        source_slug: string | null;
+        post_id: number | null;
+        post_url: string | null;
+        created_at: string;
+      }>;
+      destinationPosts = rows
+        .filter((r) => r.source_slug)
+        .map(
+          (r): WpPost => ({
+            id: r.post_id ?? 0,
+            slug: r.source_slug as string,
+            title: { rendered: r.source_slug as string },
+            content: { rendered: "" },
+            excerpt: { rendered: "" },
+            date: r.created_at,
+            modified: r.created_at,
+            status: "publish",
+            author: 0,
+            categories: [],
+            tags: [],
+            featured_media: 0,
+            link: r.post_url ?? "",
+          }),
+        );
+      destinationSource = destinationPosts.length > 0 ? "cache" : "none";
+    }
+
     const rows = await buildComparison(sourcePosts, destinationPosts);
     return {
+      notConfigured: false as const,
       rows,
       sourceTotal: sourcePosts.length,
       destinationTotal: destinationPosts.length,
+      destinationSource,
+      destinationError,
       users: sourceUsers,
       categories: sourceCats,
       tags: sourceTags,
     };
-  });
-
-const migrateInput = z.object({
-  postIds: z.array(z.number()).min(1).max(500),
-  options: z.object({
-    duplicateStrategy: z.enum(["skip", "overwrite", "copy"]),
-    preserveSlug: z.boolean(),
-    preserveDate: z.boolean(),
-    preserveStatus: z.boolean(),
-    preserveExcerpt: z.boolean(),
-    migrateFeaturedImage: z.boolean(),
-    migrateInlineImages: z.boolean(),
-  }),
-});
-
-export const runMigrationFn = createServerFn({ method: "POST" })
-  .middleware([requireSupabaseAuth])
-  .inputValidator((data: unknown) => migrateInput.parse(data))
-  .handler(async ({ data, context }) => {
-    const [src, dst] = await Promise.all([
-      loadAuthForRole(context.supabase, context.userId, "source"),
-      loadAuthForRole(context.supabase, context.userId, "destination"),
-    ]);
-    if (!src || !dst) throw new Error("Configurez les deux connexions");
-
-    const { listAllPosts } = await import(
-      "@/services/wordpress/posts.server"
-    );
-    const { runMigration } = await import(
-      "@/services/migration/pipeline.server"
-    );
-    const sourcePosts = await listAllPosts(src);
-    const toMigrate: WpPost[] = sourcePosts.filter((p) =>
-      data.postIds.includes(p.id),
-    );
-
-    const startedAt = new Date().toISOString();
-    const { report, log } = await runMigration(src, dst, toMigrate, {
-      ...data.options,
-      postIds: data.postIds,
-      scope: "selection",
-    });
-    const succeeded = report.filter((r) => r.ok).length;
-    const failed = report.length - succeeded;
-
-    await context.supabase.from("migration_runs").insert({
-      user_id: context.userId,
-      started_at: startedAt,
-      ended_at: new Date().toISOString(),
-      total: report.length,
-      succeeded,
-      failed,
-      options: data.options as never,
-      report: report as never,
-      log: log as never,
-    });
-
-    return { report, log, succeeded, failed, total: report.length };
   });
 
 export const listMigrationRuns = createServerFn({ method: "GET" })
