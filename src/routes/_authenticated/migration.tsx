@@ -125,6 +125,18 @@ function PublicationsJournalPage() {
                         {p.status === "failed" && p.error && (
                           <div className="mt-1 text-[11px] text-destructive whitespace-pre-wrap break-words max-w-[420px]">
                             {p.error}
+                            {p.apify_run_id && (
+                              <div className="mt-1">
+                                <a
+                                  href={`https://console.apify.com/actors/runs/${p.apify_run_id}/storage`}
+                                  target="_blank"
+                                  rel="noreferrer"
+                                  className="text-primary underline"
+                                >
+                                  Voir la capture d'écran de la page bloquée
+                                </a>
+                              </div>
+                            )}
                           </div>
                         )}
                       </td>
