@@ -1,17 +1,21 @@
-## Objectif
+## Problème
 
-Le contenu est du HTML brut. On bascule explicitement sur l'onglet **Code** puis on colle le HTML dans `textarea#content`. On n'utilise plus TinyMCE (onglet Visuel par défaut) qui re-encode/casse le HTML.
+Le contenu Site A contient des shortcodes WPBakery (`[vc_row]`, `[vc_column]`, `[vc_column_text]`, etc.) au début et à la fin. Site B ne charge pas WPBakery, donc ces balises s'affichent en texte brut dans l'article publié.
 
-## Correctif (un seul fichier : `apify-actor/src/createPost.ts`, fonction `fillContent`)
+## Correctif (un seul endroit : `apify-actor/src/createPost.ts`, fonction `fillContent`)
 
-1. **Cliquer l'onglet "Code"** : `button#content-html` (fallback `.wp-switch-editor.switch-html`, ou par texte "Code"). Attendre `textarea#content` visible.
-2. **Coller le HTML dans `textarea#content`** via `fill()`. Fallback `evaluate()` (set `value` + dispatch `input`/`change`) si `fill()` échoue.
-3. **Ne pas retoucher TinyMCE** : on reste sur l'onglet Code jusqu'à la publication pour que WordPress enregistre le HTML tel quel.
-4. Log : `[actor] Contenu collé via onglet Code (fill|js)`.
+Ajouter une étape de nettoyage du HTML avant l'insertion dans `textarea#content` :
+
+1. **Supprimer toutes les balises shortcodes** (ouvrantes et fermantes) via regex :
+   - `/\[\/?vc_[^\]]*\]/gi` → couvre `vc_row`, `vc_column`, `vc_column_text`, `vc_row_inner`, `vc_column_inner`, etc.
+   - Générique aussi pour autres shortcodes courants WPBakery : `/\[\/?(vc_|wpb_)[^\]]*\]/gi`.
+2. **Nettoyer les espaces/lignes vides** laissés en début/fin après suppression (`.trim()` + collapse de `\n\n\n+`).
+3. Coller le HTML nettoyé dans `textarea#content` (onglet Code, logique existante inchangée).
+4. Log : `[actor] Shortcodes WPBakery supprimés (N occurrences)`.
 
 ## Inchangé
 
-Login `/adsobra`, admin `/wp`, titre, slug, date ACF, image ACF, étiquettes, publication, auteur, UI, Zod.
+Onglet Code activé, fallback JS, titre, slug, date ACF, image ACF, étiquettes, publication, auteur, login `/adsobra`, admin `/wp`.
 
 ## Déploiement
 
