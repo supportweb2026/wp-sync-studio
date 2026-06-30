@@ -1,16 +1,32 @@
 import { z } from "zod";
 
-export const credentialsSchema = z.object({
-  siteUrl: z
-    .string()
-    .trim()
-    .url("URL invalide")
-    .refine((u) => /^https?:\/\//.test(u), "Doit commencer par http(s)://")
-    .transform((u) => u.replace(/\/+$/, "")),
+const baseUrl = z
+  .string()
+  .trim()
+  .url("URL invalide")
+  .refine((u) => /^https?:\/\//.test(u), "Doit commencer par http(s)://")
+  .transform((u) => u.replace(/\/+$/, ""));
+
+// Source = REST (Application Password)
+export const sourceCredentialsSchema = z.object({
+  siteUrl: baseUrl,
   username: z.string().trim().min(1).max(120),
   appPassword: z.string().trim().max(200),
 });
-export type Credentials = z.infer<typeof credentialsSchema>;
+export type SourceCredentials = z.infer<typeof sourceCredentialsSchema>;
+
+// Destination = Apify (mot de passe admin WordPress)
+export const destinationCredentialsSchema = z.object({
+  siteUrl: baseUrl,
+  username: z.string().trim().min(1).max(120),
+  appPassword: z.string().trim().max(200), // ici = mot de passe admin
+  loginPath: z.string().trim().max(120).optional(),
+});
+export type DestinationCredentials = z.infer<typeof destinationCredentialsSchema>;
+
+// Schéma générique conservé pour rétro-compat de l'ancien saveConnection
+export const credentialsSchema = sourceCredentialsSchema;
+export type Credentials = SourceCredentials;
 
 export const roleSchema = z.enum(["source", "destination"]);
 export type Role = z.infer<typeof roleSchema>;
@@ -32,6 +48,17 @@ export const capabilitiesSchema = z.object({
   errors: z.array(z.string()),
 });
 export type Capabilities = z.infer<typeof capabilitiesSchema>;
+
+// Capacités côté destination (Apify) — distinctes
+export const apifyCapabilitiesSchema = z.object({
+  kind: z.literal("apify"),
+  loginOk: z.boolean(),
+  dashboardReachable: z.boolean(),
+  loginPath: z.string().nullable(),
+  runId: z.string().nullable(),
+  errors: z.array(z.string()),
+});
+export type ApifyCapabilities = z.infer<typeof apifyCapabilitiesSchema>;
 
 export const wpTermSchema = z.object({
   id: z.number(),

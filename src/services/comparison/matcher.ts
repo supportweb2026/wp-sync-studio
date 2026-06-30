@@ -53,17 +53,23 @@ export async function buildComparison(
     const diff: string[] = [];
     if (normalizeTitle(s.title.rendered) !== normalizeTitle(d.title.rendered))
       diff.push("titre");
-    const [hs, hd] = await Promise.all([
-      contentHash(s.content.rendered),
-      contentHash(d.content.rendered),
-    ]);
-    if (hs !== hd) diff.push("contenu");
+    // Si la destination ne fournit pas de contenu (lecture Apify minimaliste),
+    // on n'évalue pas la diff contenu / extrait.
+    const destHasContent = Boolean((d.content?.rendered ?? "").trim());
+    if (destHasContent) {
+      const [hs, hd] = await Promise.all([
+        contentHash(s.content.rendered),
+        contentHash(d.content.rendered),
+      ]);
+      if (hs !== hd) diff.push("contenu");
+      if (
+        (s.excerpt.rendered || "").trim() !==
+        (d.excerpt.rendered || "").trim()
+      )
+        diff.push("extrait");
+    }
     if (s.status !== d.status) diff.push("statut");
-    if (
-      (s.excerpt.rendered || "").trim() !==
-      (d.excerpt.rendered || "").trim()
-    )
-      diff.push("extrait");
+
 
     rows.push({
       key: `m-${s.id}-${d.id}`,
