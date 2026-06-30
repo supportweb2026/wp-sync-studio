@@ -20,7 +20,7 @@ if (!input) {
 const cfg = input as ActorInput;
 const mode = cfg.mode ?? "publish";
 const loginPath = cfg.loginPath ?? "/wp-admin";
-const cptSlug = cfg.cptSlug ?? "actualite";
+let cptSlug = cfg.cptSlug ?? "actualite";
 const dupStrategy = cfg.duplicateStrategy ?? "skip";
 
 const browser = await chromium.launch({ headless: true });
@@ -38,6 +38,7 @@ let stage = "initialisation";
 try {
   stage = "connexion au back-office WordPress";
   await login(page, cfg.siteUrl, loginPath, cfg.username, cfg.password);
+  cptSlug = await resolveActualitesPostType(page, cptSlug);
 
   if (mode === "login-check") {
     const out: ActorLoginCheckOutput = {
@@ -89,3 +90,27 @@ try {
 
 await Actor.pushData(output);
 await Actor.exit();
+
+async function resolveActualitesPostType(page: typeof import("playwright").Page, requested: string): Promise<string> {
+  const links = await page.locator("#adminmenu a[href*='post_type='], a[href*='post-new.php']").evaluateAll((anchors) =>
+    anchors.map((a) => ({
+      text: (a.textContent ?? "").trim().toLowerCase(),
+      href: (a as HTMLAnchorElement).href,
+    })),
+  ).catch(() => [] as Array<{ text: string; href: string }>);
+
+  const slugs = links
+    .map((link) => {
+      const url = new URL(link.href);
+      return { text: link.text, slug: url.searchParams.get("post_type") };
+    })
+    .filter((item): item is { text: string; slug: string } => Boolean(item.slug));
+
+  if (slugs.some((item) => item.slug === requested)) return requested;
+  const actualites = slugs.find((item) => /actualit|news/i.test(`${item.text} ${item.slug}`));
+  if (actualites) {
+    console.log(`[actor] Type de contenu Site B détecté: ${actualites.slug} (au lieu de ${requested})`);
+    return actualites.slug;
+  }
+  return requested;
+}
