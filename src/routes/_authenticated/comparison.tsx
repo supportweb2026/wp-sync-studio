@@ -251,9 +251,10 @@ function ComparisonPage() {
             <div className="p-6 text-sm text-destructive">{(cmp.error as Error).message}</div>
           ) : cmp.data && "notConfigured" in cmp.data && cmp.data.notConfigured ? (
             <div className="p-6 text-sm text-muted-foreground">
-              Configurez les connexions Site A et Site B dans{" "}
-              <a href="/connections" className="underline text-foreground">Connexions</a> pour lancer la comparaison.
+              Configurez le Site A (source) dans{" "}
+              <a href="/connections" className="underline text-foreground">Connexions</a> pour afficher la liste des articles.
             </div>
+
           ) : (
 
             <div className="overflow-x-auto">

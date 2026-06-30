@@ -45,11 +45,13 @@ function Dashboard() {
       </header>
 
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
-        <StatCard
-          title="Articles Site A"
-          value={srcCaps?.totalPosts ?? "—"}
-          hint={src ? src.siteUrl.replace(/^https?:\/\//, "") : "Non configuré"}
-        />
+        <Link to="/comparison" className="block">
+          <StatCard
+            title="Articles Site A"
+            value={srcCaps?.totalPosts ?? "—"}
+            hint={src ? "Voir la liste →" : "Non configuré"}
+          />
+        </Link>
         <StatCard
           title="Site B (Apify)"
           value={dstCaps ? (dstCaps.loginOk ? "OK" : "KO") : "—"}
@@ -70,6 +72,11 @@ function Dashboard() {
           hint={`${history.data.length} migration(s)`}
         />
       </div>
+
+      <p className="text-xs text-muted-foreground">
+        Les articles restent sur le Site A. L'app les lit en direct via REST pour les comparer et les publier sur Site B — rien n'est dupliqué dans la base.
+      </p>
+
 
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
         <ConnectionSummary
