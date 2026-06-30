@@ -22,24 +22,23 @@ export async function createOrUpdatePost(
   existingPostId: number | null,
 ): Promise<CreatedPost> {
   const base = siteUrl.replace(/\/+$/, "");
-  const target = existingPostId
-    ? `${base}/wp-admin/post.php?post=${existingPostId}&action=edit`
-    : `${base}/wp-admin/post-new.php?post_type=${encodeURIComponent(cptSlug)}`;
-  await page.goto(target, { waitUntil: "domcontentloaded", timeout: 60_000 });
 
-  // Attendre le formulaire d'édition (Classique). On utilise des sélecteurs
-  // larges puis on retombe sur le DOM réel pour logguer les inputs disponibles.
+  if (existingPostId) {
+    const target = `${base}/wp-admin/post.php?post=${existingPostId}&action=edit`;
+    await page.goto(target, { waitUntil: "domcontentloaded", timeout: 60_000 });
+  } else {
+    await openNewPostForm(page, base, cptSlug);
+  }
+
+  // Attendre le formulaire d'édition (Classique).
   try {
     await page.waitForSelector(
       "form#post, input[name='post_title'], input[placeholder*='titre' i], input[placeholder*='title' i]",
-      { timeout: 90_000 },
+      { timeout: 45_000 },
     );
+    console.log(`[actor] Formulaire actualité détecté (url=${page.url()})`);
   } catch (err) {
-    const names = await page
-      .locator("form#post input, form#post textarea")
-      .evaluateAll((els) => els.slice(0, 20).map((e) => (e as HTMLInputElement).name || e.id || (e as HTMLElement).tagName))
-      .catch(() => [] as string[]);
-    console.error("[actor] Champs détectés sur la page:", names.join(", "));
+    await dumpPageDiagnostics(page);
     throw err;
   }
 
