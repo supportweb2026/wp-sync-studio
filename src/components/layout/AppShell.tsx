@@ -4,7 +4,7 @@ import {
   LayoutDashboard,
   PlugZap,
   GitCompareArrows,
-  Rocket,
+  Cloud,
   ScrollText,
   LogOut,
   ArrowLeftRight,
@@ -18,7 +18,7 @@ const nav = [
   { to: "/dashboard", label: "Dashboard", icon: LayoutDashboard },
   { to: "/connections", label: "Connexions", icon: PlugZap },
   { to: "/comparison", label: "Comparaison", icon: GitCompareArrows },
-  { to: "/migration", label: "Migration", icon: Rocket },
+  { to: "/migration", label: "Publication Site B", icon: Cloud },
   { to: "/journal", label: "Journal", icon: ScrollText },
 ] as const;
 
